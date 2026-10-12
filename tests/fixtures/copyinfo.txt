@@ -1,0 +1,16 @@
+﻿{4,
+{2,
+{0f6c2e8b-d5dc-4d51-a400-325fcddcfc71,0f6c2e8b-d5dc-4d51-a400-325fcddcfc71,1,
+{c3831ec8-d8d5-4f93-8a22-f9bfae07327f,"ДемоОбработка"}
+},
+{fec9d924-ed73-4bfe-9ba6-52c3fd0583c8,fec9d924-ed73-4bfe-9ba6-52c3fd0583c8,1,
+{d5b0e5ed-256d-401c-9c36-f630cafd8a62,"Форма"}
+}
+},
+{1,
+{4b5a4d3e-625d-48a2-9e98-bd293da9aee2,0f6c2e8b-d5dc-4d51-a400-325fcddcfc71,0}
+},
+{0},
+{0,0},
+{0}
+}

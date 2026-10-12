@@ -1,0 +1,9 @@
+---
+source: tests/errors.rs
+expression: report
+---
+index 3 is out of bounds for list of length 3
+expected list, found value `1`
+expected integer, found string "text"
+expected string or value, found empty list
+expected GUID, found value `1`

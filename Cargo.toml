@@ -1,0 +1,11 @@
+[package]
+name = "one-brackets"
+version = "0.1.0"
+edition = "2024"
+description = "Reader and writer for the 1C:Enterprise bracket format"
+
+[dependencies]
+thiserror = "2"
+
+[dev-dependencies]
+insta = { version = "1", features = ["glob"] }

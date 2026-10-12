@@ -1,0 +1,24 @@
+---
+source: tests/fixtures.rs
+expression: node
+input_file: tests/fixtures/info.txt
+---
+List(
+    [
+        Atom(
+            "3",
+        ),
+        Atom(
+            "1",
+        ),
+        Atom(
+            "0",
+        ),
+        Str(
+            "",
+        ),
+        Atom(
+            "0",
+        ),
+    ],
+)

@@ -1,0 +1,15 @@
+---
+source: tests/errors.rs
+expression: report
+---
+empty: input is empty: expected a bracket value
+only_bom_and_spaces: input is empty: expected a bracket value
+unclosed_list: unexpected end of input at line 2, column 6: list opened at line 1, column 1 is not closed
+unclosed_string: unexpected end of input: string starting at line 2, column 1 is not closed
+unmatched_close: unexpected '}' at line 1, column 4: no list is open
+trailing_data: trailing data at line 1, column 5: only one top-level value is allowed
+missing_comma: unexpected character '2' at line 1, column 4: expected ',' or '}'
+unexpected_unicode: unexpected character 'ж' at line 1, column 5: expected ',' or '}'
+list_after_value: unexpected character '{' at line 1, column 3: expected ',' or '}'
+invalid_utf8_string: invalid UTF-8 in quoted string starting at line 1, column 2
+invalid_utf8_value: invalid UTF-8 in value starting at line 1, column 4

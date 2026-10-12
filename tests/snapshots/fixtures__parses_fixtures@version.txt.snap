@@ -1,0 +1,29 @@
+---
+source: tests/fixtures.rs
+expression: node
+input_file: tests/fixtures/version.txt
+---
+List(
+    [
+        List(
+            [
+                Atom(
+                    "216",
+                ),
+                Atom(
+                    "0",
+                ),
+                List(
+                    [
+                        Atom(
+                            "80305",
+                        ),
+                        Atom(
+                            "0",
+                        ),
+                    ],
+                ),
+            ],
+        ),
+    ],
+)
