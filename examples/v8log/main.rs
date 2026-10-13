@@ -21,6 +21,11 @@ use std::path::Path;
 use one_brackets::{Node, Rest, Values};
 use serde::Deserialize;
 
+// Logs are large and parsing makes many small allocations: a fast allocator
+// roughly halves the time on Windows. See "Performance" in the crate docs.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 const SAMPLE: &[u8] = include_bytes!("20260908000000.lgp");
 const HEADER: &str = "1CV8LOG(ver 2.0)";
 

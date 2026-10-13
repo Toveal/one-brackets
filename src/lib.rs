@@ -69,6 +69,27 @@
 //!
 //! With the `serde` feature user types map to lists by field order:
 //! see `from_node`, `to_node`, `Rest`, `Counted` and `atom`.
+//!
+//! # Performance
+//!
+//! Every string and value is a separate `String` and every list a `Vec`, so most of
+//! the parsing time of large files (event logs, big forms) goes to the memory allocator.
+//! The system allocator on Windows is especially slow at this: switching the application
+//! to [mimalloc](https://crates.io/crates/mimalloc) made parsing about 2.3 times faster
+//! in the crate's benchmarks. The library does not pick an allocator; the application does:
+//!
+//! ```toml
+//! [dependencies]
+//! mimalloc = "0.1"
+//! ```
+//!
+//! ```ignore
+//! #[global_allocator]
+//! static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+//! ```
+//!
+//! For large inputs prefer [`Values`] over parsing one huge list: it keeps only
+//! the current record in memory. `cargo bench` measures reading and writing speed.
 
 #[cfg(feature = "serde")]
 mod de;

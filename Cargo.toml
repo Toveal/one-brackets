@@ -26,5 +26,6 @@ harness = false
 [dev-dependencies]
 criterion = "0.5"
 insta = { version = "1", features = ["glob"] }
+mimalloc = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
