@@ -156,11 +156,8 @@ impl<R: Read> Values<R> {
             return Ok(None);
         }
         let mut bytes = Vec::new();
-        while let Some(b) = input.bump()? {
-            if b == b'\n' {
-                break;
-            }
-            bytes.push(b);
+        if input.scan(|b| b == b'\n', Some(&mut bytes))?.is_some() {
+            input.bump()?;
         }
         if bytes.last() == Some(&b'\r') {
             bytes.pop();
@@ -278,14 +275,7 @@ impl<R: BufRead> Input<R> {
             Some(self.pending.remove(0))
         };
         if let Some(b) = byte {
-            self.pos.offset += 1;
-            if b == b'\n' {
-                self.pos.line += 1;
-                self.pos.column = 1;
-            } else if b & 0xC0 != 0x80 {
-                // UTF-8 continuation bytes do not advance the column.
-                self.pos.column += 1;
-            }
+            advance(&mut self.pos, &[b]);
         }
         Ok(byte)
     }
@@ -310,10 +300,53 @@ impl<R: BufRead> Input<R> {
     }
 
     fn skip_ws(&mut self) -> Result<()> {
-        while self.peek()?.is_some_and(|b| b.is_ascii_whitespace()) {
-            self.bump()?;
-        }
+        self.scan(|b| !b.is_ascii_whitespace(), None)?;
         Ok(())
+    }
+
+    /// Moves over bytes until `stop` matches, a whole buffer at a time, copying them to `out`.
+    ///
+    /// Returns the stop byte, which stays unread, or `None` at the end of input.
+    fn scan(
+        &mut self,
+        stop: impl Fn(u8) -> bool,
+        mut out: Option<&mut Vec<u8>>,
+    ) -> Result<Option<u8>> {
+        // Pushed-back bytes of a partial BOM: at most two, one by one.
+        while let Some(&b) = self.pending.first() {
+            if stop(b) {
+                return Ok(Some(b));
+            }
+            self.bump()?;
+            if let Some(out) = out.as_deref_mut() {
+                out.push(b);
+            }
+        }
+        loop {
+            let buf = loop {
+                match self.inner.fill_buf() {
+                    Ok(buf) => break buf,
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                    Err(e) => return Err(e.into()),
+                }
+            };
+            if buf.is_empty() {
+                return Ok(None);
+            }
+            let (len, found) = match buf.iter().position(|&b| stop(b)) {
+                Some(i) => (i, Some(buf[i])),
+                None => (buf.len(), None),
+            };
+            let chunk = &buf[..len];
+            if let Some(out) = out.as_deref_mut() {
+                out.extend_from_slice(chunk);
+            }
+            advance(&mut self.pos, chunk);
+            self.inner.consume(len);
+            if found.is_some() {
+                return Ok(found);
+            }
+        }
     }
 }
 
@@ -402,18 +435,16 @@ impl<R: BufRead> Parser<R> {
         self.input.bump()?;
         let mut bytes = Vec::new();
         loop {
-            match self.input.bump()? {
-                None => return Err(ParseError::UnclosedString { start }),
-                Some(b'"') => {
-                    if self.input.peek()? == Some(b'"') {
-                        self.input.bump()?;
-                        bytes.push(b'"');
-                    } else {
-                        break;
-                    }
-                }
-                Some(b) => bytes.push(b),
+            if self.input.scan(|b| b == b'"', Some(&mut bytes))?.is_none() {
+                return Err(ParseError::UnclosedString { start });
             }
+            self.input.bump()?;
+            // A doubled quote is an escaped one; a single quote ends the string.
+            if self.input.peek()? != Some(b'"') {
+                break;
+            }
+            self.input.bump()?;
+            bytes.push(b'"');
         }
         let value = String::from_utf8(bytes).map_err(|_| ParseError::InvalidUtf8 {
             context: "quoted string",
@@ -425,18 +456,14 @@ impl<R: BufRead> Parser<R> {
     fn atom(&mut self) -> Result<Node> {
         let start = self.input.pos;
         let mut bytes = Vec::new();
-        while let Some(b) = self.input.peek()? {
-            let stop = match b {
-                b',' | b'{' | b'}' => true,
-                // Base64 is wrapped with `\r\r\n`: whitespace is part of the value.
-                _ if b.is_ascii_whitespace() => !bytes.starts_with(BASE64),
-                _ => false,
-            };
-            if stop {
-                break;
-            }
-            bytes.push(b);
-            self.input.bump()?;
+        let delimiter = |b: u8| matches!(b, b',' | b'{' | b'}');
+        let stop = self.input.scan(
+            |b| delimiter(b) || b.is_ascii_whitespace(),
+            Some(&mut bytes),
+        )?;
+        // Base64 is wrapped with `\r\r\n`: whitespace is part of the value.
+        if stop.is_some_and(|b| b.is_ascii_whitespace()) && bytes.starts_with(BASE64) {
+            self.input.scan(delimiter, Some(&mut bytes))?;
         }
         let value = String::from_utf8(bytes).map_err(|_| ParseError::InvalidUtf8 {
             context: "value",
@@ -459,6 +486,20 @@ impl<R: BufRead> Parser<R> {
             .ok()
             .and_then(|s| s.chars().next())
             .unwrap_or(char::REPLACEMENT_CHARACTER))
+    }
+}
+
+/// Moves the position over bytes already read.
+fn advance(pos: &mut Position, bytes: &[u8]) {
+    // UTF-8 continuation bytes do not advance the column.
+    let chars = |bytes: &[u8]| bytes.iter().filter(|&&b| b & 0xC0 != 0x80).count() as u64;
+    pos.offset += bytes.len() as u64;
+    match bytes.iter().rposition(|&b| b == b'\n') {
+        Some(last) => {
+            pos.line += bytes.iter().filter(|&&b| b == b'\n').count() as u64;
+            pos.column = 1 + chars(&bytes[last + 1..]);
+        }
+        None => pos.column += chars(bytes),
     }
 }
 
