@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `Clone`, `PartialEq`, `Hash`, `Debug` and dropping of `Node` are no longer recursive:
+  a deeply nested tree (e.g. 100 000 levels) no longer overflows the stack. Parsing and
+  writing were already non-recursive. The `Debug` output is unchanged.
+
+### Changed
+
+- Documentation states that whitespace between items is not kept on writing and that
+  serde mapping is recursive.
+
 ## [0.1.0] - 2026-10-13
 
 First release.
