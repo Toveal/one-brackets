@@ -22,7 +22,7 @@ use one_brackets::{Node, Rest, Values};
 use serde::Deserialize;
 
 // Logs are large and parsing makes many small allocations: a fast allocator
-// roughly halves the time on Windows. See "Performance" in the crate docs.
+// saves 20-35% of the time, more on Windows. See "Performance" in the crate docs.
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

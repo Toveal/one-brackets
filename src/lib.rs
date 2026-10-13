@@ -74,9 +74,10 @@
 //!
 //! Every string and value is a separate `String` and every list a `Vec`, so most of
 //! the parsing time of large files (event logs, big forms) goes to the memory allocator.
-//! The system allocator on Windows is especially slow at this: switching the application
-//! to [mimalloc](https://crates.io/crates/mimalloc) made parsing about 2.3 times faster
-//! in the crate's benchmarks. The library does not pick an allocator; the application does:
+//! The library does not pick an allocator; the application can switch to
+//! [mimalloc](https://crates.io/crates/mimalloc), which works on Windows, Linux and macOS.
+//! In the crate's measurements it made parsing 1.5–2.7 times faster on Windows,
+//! whose system allocator is the slowest, and 1.2–1.5 times faster on Linux (glibc):
 //!
 //! ```toml
 //! [dependencies]
@@ -91,6 +92,18 @@
 //! For large inputs prefer [`Values`] over parsing one huge list: it keeps only
 //! the current record in memory. `cargo bench` measures reading and writing speed.
 
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
+/// Runs the README examples as doctests; some of them need the `serde` feature.
+#[cfg(all(doctest, feature = "serde"))]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;
+
+/// The Russian README carries the same examples.
+#[cfg(all(doctest, feature = "serde"))]
+#[doc = include_str!("../README.ru.md")]
+struct ReadmeRuDoctests;
+
 #[cfg(feature = "serde")]
 mod de;
 mod error;
@@ -103,13 +116,17 @@ mod serde_impls;
 mod writer;
 
 #[cfg(feature = "serde")]
+#[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 pub use de::{from_node, from_reader, from_str};
 #[cfg(feature = "serde")]
+#[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 pub use error::SerializeError;
 pub use error::{AccessError, AccessErrorKind, Error, ParseError, Position, Result};
 pub use node::{Node, Value};
 pub use parser::Values;
 #[cfg(feature = "serde")]
+#[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 pub use ser::{to_node, to_string};
 #[cfg(feature = "serde")]
+#[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 pub use serde_impls::{Counted, Rest, atom};

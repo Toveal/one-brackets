@@ -2,7 +2,17 @@
 name = "one-brackets"
 version = "0.1.0"
 edition = "2024"
-description = "Reader and writer for the 1C:Enterprise bracket format"
+rust-version = "1.85"
+description = "Reader and writer for the 1C:Enterprise bracket format: lossless tree, positions in errors, serde mapping"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Toveal/one-brackets"
+readme = "README.md"
+keywords = ["1c-enterprise", "brackets", "parser", "serde", "event-log"]
+categories = ["parser-implementations", "encoding"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 serde = ["dep:serde"]
