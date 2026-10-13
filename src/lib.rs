@@ -60,11 +60,28 @@
 //!
 //! Parsing problems are reported as [`ParseError`], structure problems as [`AccessError`];
 //! [`Error`] wraps both, so `?` works for either in one function.
+//!
+//! With the `serde` feature user types map to lists by field order:
+//! see `from_node`, `to_node`, `Tail` and `atom`.
 
+#[cfg(feature = "serde")]
+mod de;
 mod error;
 mod node;
 mod parser;
+#[cfg(feature = "serde")]
+mod ser;
+#[cfg(feature = "serde")]
+mod serde_impls;
 mod writer;
 
+#[cfg(feature = "serde")]
+pub use de::{from_node, from_reader, from_str};
+#[cfg(feature = "serde")]
+pub use error::SerializeError;
 pub use error::{AccessError, AccessErrorKind, Error, ParseError, Position, Result};
 pub use node::{Node, Value};
+#[cfg(feature = "serde")]
+pub use ser::{to_node, to_string};
+#[cfg(feature = "serde")]
+pub use serde_impls::{Tail, atom};

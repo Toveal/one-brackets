@@ -116,6 +116,8 @@ pub enum AccessErrorKind {
         found: String,
         reason: String,
     },
+    /// A message from serde: missing items, unknown variants and the like.
+    Message(String),
 }
 
 impl AccessError {
@@ -129,6 +131,22 @@ impl AccessError {
 
     pub(crate) fn with_path(mut self, path: &[usize]) -> Self {
         self.0.path = path.to_vec();
+        self
+    }
+
+    /// Sets the position unless a more precise (inner) one is already known.
+    #[cfg_attr(not(feature = "serde"), allow(dead_code))]
+    pub(crate) fn or_position(mut self, position: Option<Position>) -> Self {
+        if self.0.position.is_none() {
+            self.0.position = position;
+        }
+        self
+    }
+
+    /// Adds a step to the path while the error bubbles up to the parent list.
+    #[cfg_attr(not(feature = "serde"), allow(dead_code))]
+    pub(crate) fn prepend_path(mut self, index: usize) -> Self {
+        self.0.path.insert(0, index);
         self
     }
 
@@ -158,6 +176,7 @@ impl fmt::Display for AccessError {
             AccessErrorKind::IndexOutOfBounds { index, len } => {
                 write!(f, "index {index} is out of bounds for list of length {len}")?
             }
+            AccessErrorKind::Message(message) => f.write_str(message)?,
         }
         if let Some(position) = inner.position {
             write!(f, " at {position}")?;
@@ -173,6 +192,33 @@ impl fmt::Display for AccessError {
 }
 
 impl std::error::Error for AccessError {}
+
+#[cfg(feature = "serde")]
+impl serde::de::Error for AccessError {
+    fn custom<T: fmt::Display>(msg: T) -> Self {
+        AccessError::new(AccessErrorKind::Message(msg.to_string()), None)
+    }
+}
+
+/// A value cannot be represented in the bracket format.
+#[cfg(feature = "serde")]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
+pub struct SerializeError(String);
+
+#[cfg(feature = "serde")]
+impl SerializeError {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::ser::Error for SerializeError {
+    fn custom<T: fmt::Display>(msg: T) -> Self {
+        Self(msg.to_string())
+    }
+}
 
 /// Either kind of error, for code that parses and maps in one function.
 #[derive(Debug, thiserror::Error)]

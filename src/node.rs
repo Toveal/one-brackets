@@ -200,11 +200,13 @@ impl Node {
     }
 
     pub fn try_str(&self) -> Result<&str, AccessError> {
-        self.as_str().ok_or_else(|| self.unexpected("string or value"))
+        self.as_str()
+            .ok_or_else(|| self.unexpected("string or value"))
     }
 
     pub fn try_quoted(&self) -> Result<&str, AccessError> {
-        self.as_quoted().ok_or_else(|| self.unexpected("quoted string"))
+        self.as_quoted()
+            .ok_or_else(|| self.unexpected("quoted string"))
     }
 
     pub fn try_atom(&self) -> Result<&str, AccessError> {
@@ -275,9 +277,7 @@ impl Node {
     pub fn try_get_path(&self, path: &[usize]) -> Result<&Node, AccessError> {
         let mut node = self;
         for (depth, &idx) in path.iter().enumerate() {
-            node = node
-                .try_get(idx)
-                .map_err(|e| e.with_path(&path[..depth]))?;
+            node = node.try_get(idx).map_err(|e| e.with_path(&path[..depth]))?;
         }
         Ok(node)
     }
@@ -318,7 +318,7 @@ impl Node {
         }
     }
 
-    fn unexpected(&self, expected: impl Into<Cow<'static, str>>) -> AccessError {
+    pub(crate) fn unexpected(&self, expected: impl Into<Cow<'static, str>>) -> AccessError {
         AccessError::new(
             AccessErrorKind::UnexpectedType {
                 expected: expected.into(),
@@ -330,7 +330,7 @@ impl Node {
 }
 
 /// `u32` for primitives, `Foo` instead of `my_crate::model::Foo` for user types.
-fn type_label<T>() -> Cow<'static, str> {
+pub(crate) fn type_label<T>() -> Cow<'static, str> {
     let name = std::any::type_name::<T>();
     if name.contains('<') {
         Cow::Borrowed(name)
@@ -451,7 +451,10 @@ mod tests {
         assert_eq!(node[0].as_i64(), Some(12));
         assert_eq!(node[0].as_f64(), Some(12.0));
         assert_eq!(node[0].as_parsed::<u8>(), Some(12));
-        assert_eq!(node.get_path(&[1, 0]).and_then(Node::as_quoted), Some("text"));
+        assert_eq!(
+            node.get_path(&[1, 0]).and_then(Node::as_quoted),
+            Some("text")
+        );
         assert_eq!(node.get_path(&[1, 0]).and_then(Node::as_atom), None);
         assert!(node.get_path(&[1, 1]).and_then(Node::as_guid).is_some());
         assert_eq!(node.get_path(&[1, 2]).and_then(Node::as_bool), Some(true));

@@ -44,7 +44,9 @@ fn open_error_names_the_file() {
 #[test]
 fn access_errors() {
     let node: Node = "{1,\"text\",{},
-{300,-1}}".parse().unwrap();
+{300,-1}}"
+        .parse()
+        .unwrap();
     let report = [
         node.try_get(9).unwrap_err(),
         node[0].try_get(0).unwrap_err(),

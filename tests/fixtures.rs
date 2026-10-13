@@ -49,7 +49,12 @@ fn streaming_matches_buffered() {
     insta::glob!("fixtures/*.txt", |path| {
         let bytes = fs::read(path).unwrap();
         let streamed = Node::from_reader(ByteByByte(&bytes)).unwrap();
-        assert_eq!(streamed, Node::try_from(bytes).unwrap(), "{}", path.display());
+        assert_eq!(
+            streamed,
+            Node::try_from(bytes).unwrap(),
+            "{}",
+            path.display()
+        );
     });
 }
 
@@ -90,7 +95,10 @@ fn maps_to_user_type() {
     let version = Node::try_from(std::path::Path::new("tests/fixtures/version.txt")).unwrap();
     insta::assert_snapshot!(Root::try_from(&version).unwrap_err(), @"expected u32, found list of 3 items at line 2, column 1");
 
-    let root: Root = fs::read_to_string("tests/fixtures/root.txt").unwrap().parse().unwrap();
+    let root: Root = fs::read_to_string("tests/fixtures/root.txt")
+        .unwrap()
+        .parse()
+        .unwrap();
     assert_eq!(root.version, 2);
     insta::assert_snapshot!("{2,".parse::<Root>().unwrap_err(), @"unexpected end of input at line 1, column 4: list opened at line 1, column 1 is not closed");
     insta::assert_snapshot!("{2,\"x\"}".parse::<Root>().unwrap_err(), @r#"expected GUID, found string "x" at line 1, column 4"#);
