@@ -15,6 +15,10 @@ thiserror = "2"
 name = "cluster"
 required-features = ["serde"]
 
+[[example]]
+name = "v8log"
+required-features = ["serde"]
+
 [dev-dependencies]
 insta = { version = "1", features = ["glob"] }
 serde = { version = "1", features = ["derive"] }

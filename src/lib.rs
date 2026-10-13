@@ -81,6 +81,7 @@ pub use de::{from_node, from_reader, from_str};
 pub use error::SerializeError;
 pub use error::{AccessError, AccessErrorKind, Error, ParseError, Position, Result};
 pub use node::{Node, Value};
+pub use parser::Values;
 #[cfg(feature = "serde")]
 pub use ser::{to_node, to_string};
 #[cfg(feature = "serde")]

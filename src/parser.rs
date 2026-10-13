@@ -101,6 +101,138 @@ fn parse<R: BufRead>(reader: R) -> Result<Node> {
     }
 }
 
+/// Comma-separated top-level values read one at a time, e.g. records of an event log `.lgp`.
+///
+/// The input is streamed: only the current value is kept in memory. Text lines before
+/// the values (a file header) can be read with [`read_line`](Values::read_line);
+/// positions in errors and nodes still count from the start of the input.
+/// A trailing comma is allowed: a log being written ends with one.
+/// The iterator stops after the first error.
+///
+/// ```
+/// use one_brackets::Values;
+///
+/// # fn main() -> Result<(), one_brackets::ParseError> {
+/// let mut values = Values::new("HEADER\r\n{1,a},\r\n{2,b},".as_bytes());
+/// assert_eq!(values.read_line()?.as_deref(), Some("HEADER"));
+/// let records = values.collect::<Result<Vec<_>, _>>()?;
+/// assert_eq!(records.len(), 2);
+/// assert_eq!(records[1].position().unwrap().line, 3);
+/// # Ok(())
+/// # }
+/// ```
+pub struct Values<R> {
+    parser: Parser<BufReader<R>>,
+    state: State,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum State {
+    /// The BOM has not been checked yet.
+    Fresh,
+    BeforeValue,
+    AfterValue,
+    Done,
+}
+
+impl<R: Read> Values<R> {
+    pub fn new(reader: R) -> Self {
+        Values {
+            parser: Parser {
+                input: Input::new(BufReader::new(reader)),
+            },
+            state: State::Fresh,
+        }
+    }
+
+    /// Reads one text line before the values; `None` at the end of input.
+    ///
+    /// The line ending (`\n` or `\r\n`) is not included.
+    pub fn read_line(&mut self) -> Result<Option<String>> {
+        self.start()?;
+        let input = &mut self.parser.input;
+        let at = input.pos;
+        if input.peek()?.is_none() {
+            return Ok(None);
+        }
+        let mut bytes = Vec::new();
+        while let Some(b) = input.bump()? {
+            if b == b'\n' {
+                break;
+            }
+            bytes.push(b);
+        }
+        if bytes.last() == Some(&b'\r') {
+            bytes.pop();
+        }
+        String::from_utf8(bytes)
+            .map(Some)
+            .map_err(|_| ParseError::InvalidUtf8 {
+                context: "line",
+                at,
+            })
+    }
+
+    /// Position of the next unread byte.
+    pub fn position(&self) -> Position {
+        self.parser.input.pos
+    }
+
+    fn start(&mut self) -> Result<()> {
+        if self.state == State::Fresh {
+            self.parser.input.skip_bom()?;
+            self.state = State::BeforeValue;
+        }
+        Ok(())
+    }
+
+    fn read_value(&mut self) -> Result<Option<Node>> {
+        self.start()?;
+        let input = &mut self.parser.input;
+        input.skip_ws()?;
+        if self.state == State::AfterValue {
+            let at = input.pos;
+            match input.peek()? {
+                None => return Ok(None),
+                Some(b',') => {
+                    input.bump()?;
+                    input.skip_ws()?;
+                }
+                Some(b'}') => return Err(ParseError::UnmatchedClose { at }),
+                Some(_) => {
+                    return Err(ParseError::UnexpectedChar {
+                        found: self.parser.char_at_cursor()?,
+                        at,
+                    });
+                }
+            }
+        }
+        if self.parser.input.peek()?.is_none() {
+            return Ok(None);
+        }
+        let node = self.parser.value()?;
+        self.state = State::AfterValue;
+        Ok(Some(node))
+    }
+}
+
+impl<R: Read> Iterator for Values<R> {
+    type Item = Result<Node>;
+
+    fn next(&mut self) -> Option<Result<Node>> {
+        if self.state == State::Done {
+            return None;
+        }
+        let result = self.read_value();
+        if !matches!(result, Ok(Some(_))) {
+            self.state = State::Done;
+        }
+        result.transpose()
+    }
+}
+
+impl<R: Read> std::iter::FusedIterator for Values<R> {}
+
 /// Byte cursor over [`BufRead`] that tracks the position.
 struct Input<R> {
     inner: R,
@@ -426,6 +558,35 @@ mod tests {
         assert!(Node::try_from("{1,2").is_err());
         assert!(Node::try_from("{\"abc}").is_err());
         assert!(Node::try_from("{1}}").is_err());
+    }
+
+    #[test]
+    fn reads_value_sequences() {
+        let text = "\u{feff}HEAD\r\n\r\n{1},\r\n{2,\"x\"},\r\nz,\r\n";
+        let mut values = Values::new(ByteByByte(text.as_bytes()));
+        assert_eq!(values.read_line().unwrap().as_deref(), Some("HEAD"));
+        assert_eq!(values.read_line().unwrap().as_deref(), Some(""));
+        let nodes: Vec<Node> = values.map(Result::unwrap).collect();
+        assert_eq!(
+            nodes,
+            [
+                Node::list([atom("1")]),
+                Node::list([atom("2"), Node::string("x")]),
+                atom("z")
+            ]
+        );
+        assert_eq!(nodes[1].position().unwrap().line, 4);
+
+        assert_eq!(Values::new("".as_bytes()).count(), 0);
+        let mut values = Values::new("{1}\r\n{2}".as_bytes());
+        assert!(values.next().unwrap().is_ok());
+        insta::assert_snapshot!(values.next().unwrap().unwrap_err(), @"unexpected character '{' at line 2, column 1: expected ',' or '}'");
+        assert!(values.next().is_none());
+        let err = Values::new("{1},{2".as_bytes())
+            .nth(1)
+            .unwrap()
+            .unwrap_err();
+        insta::assert_snapshot!(err, @"unexpected end of input at line 1, column 7: list opened at line 1, column 5 is not closed");
     }
 
     #[test]
