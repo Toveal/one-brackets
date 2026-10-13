@@ -1,0 +1,15 @@
+---
+source: tests/fixtures.rs
+expression: node
+input_file: tests/fixtures/value-string.txt
+---
+List(
+    [
+        Str(
+            "S",
+        ),
+        Str(
+            "Кавычки \"внутри\" и\r\nперевод строки",
+        ),
+    ],
+)

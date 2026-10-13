@@ -58,6 +58,75 @@ fn streaming_matches_buffered() {
     });
 }
 
+/// `structure.txt` is `ЗначениеВСтрокуВнутр()` of
+/// `Новый Структура("Число, Строка, Гуид", 1, "Привет", Новый УникальныйИдентификатор)`.
+#[test]
+fn reads_platform_value_representation() {
+    let node = Node::try_from(std::path::Path::new("tests/fixtures/structure.txt")).unwrap();
+    // `{"#",<type>,<data>}`: a value of an object type.
+    assert_eq!(node[0].as_quoted(), Some("#"));
+    assert!(node[1].as_guid().is_some());
+
+    // A structure is a counted list of `{key,value}` pairs, each a tagged value.
+    let pairs: Vec<String> = node[2]
+        .try_counted()
+        .unwrap()
+        .iter()
+        .map(|pair| format!("{}: {}", pair[0][1].try_str().unwrap(), pair[1]))
+        .collect();
+    insta::assert_snapshot!(pairs.join("\n"), @r##"
+    Число: {"N",1}
+    Строка: {"S","Привет"}
+    Гуид: {"#",fc01b5df-97fe-449b-83d4-218a090e681e,48e3d89f-e931-4f71-b2bd-3c93c7752bdd}
+    "##);
+}
+
+/// `value-*.txt` are `ЗначениеВСтрокуВнутр()` of one value each: the tag and,
+/// for object types, the type GUID that comes after `#`.
+#[test]
+fn platform_value_tags() {
+    let mut report = Vec::new();
+    let mut paths: Vec<_> = fs::read_dir("tests/fixtures")
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("value-")
+        })
+        .collect();
+    paths.sort();
+    for path in paths {
+        let node = Node::try_from(path.as_path()).unwrap();
+        let tag = node[0].try_quoted().unwrap();
+        let rest = match tag {
+            "#" => format!("type {}", node[1].try_guid().unwrap()),
+            _ => node
+                .iter()
+                .skip(1)
+                .map(Node::describe)
+                .collect::<Vec<_>>()
+                .join(", "),
+        };
+        let name = path.file_stem().unwrap().to_str().unwrap();
+        report.push(format!("{name}: {tag} {rest}").trim_end().to_owned());
+    }
+    insta::assert_snapshot!(report.join("\n"), @r#"
+    value-array: # type 51e7a0d2-530b-11d4-b98a-008048da3034
+    value-boolean: B value `1`
+    value-date: D value `20260908233443`
+    value-empty-string: S string ""
+    value-map: # type 3d48feae-a9c6-4c5a-a099-9eb6477630c6
+    value-null: L
+    value-number: N value `-12345.678`
+    value-string: S string "Кавычки \"внутри\" и\r\nперевод строки"
+    value-undefined: U
+    value-value-table: # type acf6192e-81ca-46ef-93a6-5a6968b78663
+    "#);
+}
+
 #[test]
 fn edits_keep_the_rest_byte_for_byte() {
     let bytes = fs::read("tests/fixtures/copyinfo.txt").unwrap();

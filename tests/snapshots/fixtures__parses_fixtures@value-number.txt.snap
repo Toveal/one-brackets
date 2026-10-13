@@ -1,0 +1,15 @@
+---
+source: tests/fixtures.rs
+expression: node
+input_file: tests/fixtures/value-number.txt
+---
+List(
+    [
+        Str(
+            "N",
+        ),
+        Atom(
+            "-12345.678",
+        ),
+    ],
+)

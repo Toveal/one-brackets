@@ -1,0 +1,12 @@
+---
+source: tests/fixtures.rs
+expression: node
+input_file: tests/fixtures/value-undefined.txt
+---
+List(
+    [
+        Str(
+            "U",
+        ),
+    ],
+)

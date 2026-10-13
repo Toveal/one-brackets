@@ -1,0 +1,15 @@
+---
+source: tests/fixtures.rs
+expression: node
+input_file: tests/fixtures/value-date.txt
+---
+List(
+    [
+        Str(
+            "D",
+        ),
+        Atom(
+            "20260908233443",
+        ),
+    ],
+)

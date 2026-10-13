@@ -1,0 +1,42 @@
+---
+source: tests/fixtures.rs
+expression: node
+input_file: tests/fixtures/value-array.txt
+---
+List(
+    [
+        Str(
+            "#",
+        ),
+        Atom(
+            "51e7a0d2-530b-11d4-b98a-008048da3034",
+        ),
+        List(
+            [
+                Atom(
+                    "2",
+                ),
+                List(
+                    [
+                        Str(
+                            "N",
+                        ),
+                        Atom(
+                            "1",
+                        ),
+                    ],
+                ),
+                List(
+                    [
+                        Str(
+                            "S",
+                        ),
+                        Str(
+                            "два",
+                        ),
+                    ],
+                ),
+            ],
+        ),
+    ],
+)

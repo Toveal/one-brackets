@@ -1,0 +1,15 @@
+---
+source: tests/fixtures.rs
+expression: node
+input_file: tests/fixtures/value-boolean.txt
+---
+List(
+    [
+        Str(
+            "B",
+        ),
+        Atom(
+            "1",
+        ),
+    ],
+)
