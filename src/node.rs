@@ -1,17 +1,28 @@
 //! Object model of the bracket format.
 
+use std::borrow::Cow;
+use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::ops::Index;
+use std::str::FromStr;
 
-use crate::{Error, Result};
+use crate::{AccessError, AccessErrorKind, Position};
 
 const BASE64: &str = "#base64:";
 
-/// A node of a bracket file.
+/// A node of a bracket file: a [`Value`] plus the position it was parsed from.
 ///
 /// Quoted strings and atoms are kept distinct, so writing reproduces
-/// the original platform text byte for byte.
+/// the original platform text byte for byte. Equality and hashing ignore the position.
+#[derive(Clone)]
+pub struct Node {
+    value: Value,
+    position: Option<Position>,
+}
+
+/// Content of a [`Node`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Node {
+pub enum Value {
     /// A list `{a,b,c}`.
     List(Vec<Node>),
     /// A quoted string; doubled quotes are already unescaped.
@@ -22,76 +33,106 @@ pub enum Node {
 }
 
 impl Node {
+    pub(crate) fn parsed(value: Value, position: Position) -> Self {
+        Self {
+            value,
+            position: Some(position),
+        }
+    }
+
+    /// A list of nodes.
+    pub fn list(items: impl IntoIterator<Item = Node>) -> Self {
+        Value::List(items.into_iter().collect()).into()
+    }
+
     /// An unquoted atom (GUID, literal, number).
     pub fn atom(value: impl Into<String>) -> Self {
-        Node::Atom(value.into())
+        Value::Atom(value.into()).into()
     }
 
     /// A quoted string.
     ///
     /// There is no `From<&str>` for building: `Node::try_from(&str)` parses text.
     pub fn string(value: impl Into<String>) -> Self {
-        Node::Str(value.into())
+        Value::Str(value.into()).into()
+    }
+
+    pub fn value(&self) -> &Value {
+        &self.value
+    }
+
+    pub fn into_value(self) -> Value {
+        self.value
+    }
+
+    /// Where the node starts in the input; `None` for nodes built in code.
+    pub fn position(&self) -> Option<Position> {
+        self.position
     }
 
     pub fn is_list(&self) -> bool {
-        matches!(self, Node::List(_))
+        matches!(self.value, Value::List(_))
     }
 
     pub fn is_str(&self) -> bool {
-        matches!(self, Node::Str(_))
+        matches!(self.value, Value::Str(_))
     }
 
     pub fn is_atom(&self) -> bool {
-        matches!(self, Node::Atom(_))
+        matches!(self.value, Value::Atom(_))
     }
 
     /// An empty atom: no value between commas (`{1,,2}`).
     pub fn is_empty_atom(&self) -> bool {
-        matches!(self, Node::Atom(s) if s.is_empty())
+        matches!(&self.value, Value::Atom(s) if s.is_empty())
     }
 
     pub fn as_list(&self) -> Option<&[Node]> {
-        match self {
-            Node::List(items) => Some(items),
+        match &self.value {
+            Value::List(items) => Some(items),
             _ => None,
         }
     }
 
     /// Value of a string or an atom.
     pub fn as_str(&self) -> Option<&str> {
-        match self {
-            Node::Str(s) | Node::Atom(s) => Some(s),
-            Node::List(_) => None,
+        match &self.value {
+            Value::Str(s) | Value::Atom(s) => Some(s),
+            Value::List(_) => None,
         }
     }
 
     /// Quoted string only.
     pub fn as_quoted(&self) -> Option<&str> {
-        match self {
-            Node::Str(s) => Some(s),
+        match &self.value {
+            Value::Str(s) => Some(s),
             _ => None,
         }
     }
 
     /// Atom only.
     pub fn as_atom(&self) -> Option<&str> {
-        match self {
-            Node::Atom(s) => Some(s),
+        match &self.value {
+            Value::Atom(s) => Some(s),
             _ => None,
         }
     }
 
-    pub fn as_i64(&self) -> Option<i64> {
+    /// Atom parsed into any [`FromStr`] type: `node.as_parsed::<u32>()`.
+    pub fn as_parsed<T: FromStr>(&self) -> Option<T> {
         self.as_atom()?.parse().ok()
+    }
+
+    pub fn as_i64(&self) -> Option<i64> {
+        self.as_parsed()
     }
 
     pub fn as_u64(&self) -> Option<u64> {
-        self.as_atom()?.parse().ok()
+        self.as_parsed()
     }
 
     pub fn as_f64(&self) -> Option<f64> {
-        self.as_atom()?.parse().ok()
+        self.as_parsed()
     }
 
     /// Atom `1` is `true`, `0` is `false`.
@@ -140,58 +181,105 @@ impl Node {
     }
 
     pub fn into_list(self) -> Option<Vec<Node>> {
-        match self {
-            Node::List(items) => Some(items),
+        match self.value {
+            Value::List(items) => Some(items),
             _ => None,
         }
     }
 
     /// Value of a string or an atom.
     pub fn into_string(self) -> Option<String> {
-        match self {
-            Node::Str(s) | Node::Atom(s) => Some(s),
-            Node::List(_) => None,
+        match self.value {
+            Value::Str(s) | Value::Atom(s) => Some(s),
+            Value::List(_) => None,
         }
     }
 
-    pub fn try_list(&self) -> Result<&[Node]> {
+    pub fn try_list(&self) -> Result<&[Node], AccessError> {
         self.as_list().ok_or_else(|| self.unexpected("list"))
     }
 
-    pub fn try_str(&self) -> Result<&str> {
+    pub fn try_str(&self) -> Result<&str, AccessError> {
         self.as_str().ok_or_else(|| self.unexpected("string or value"))
     }
 
-    pub fn try_quoted(&self) -> Result<&str> {
+    pub fn try_quoted(&self) -> Result<&str, AccessError> {
         self.as_quoted().ok_or_else(|| self.unexpected("quoted string"))
     }
 
-    pub fn try_i64(&self) -> Result<i64> {
-        self.as_i64().ok_or_else(|| self.unexpected("integer"))
+    pub fn try_atom(&self) -> Result<&str, AccessError> {
+        self.as_atom().ok_or_else(|| self.unexpected("value"))
     }
 
-    pub fn try_u64(&self) -> Result<u64> {
-        self.as_u64().ok_or_else(|| self.unexpected("unsigned integer"))
+    /// Atom parsed into any [`FromStr`] type: `node.try_parse::<u32>()?`.
+    ///
+    /// The error names the target type and keeps the reason from [`FromStr::Err`].
+    pub fn try_parse<T>(&self) -> Result<T, AccessError>
+    where
+        T: FromStr,
+        T::Err: fmt::Display,
+    {
+        let expected = type_label::<T>();
+        let atom = self
+            .as_atom()
+            .ok_or_else(|| self.unexpected(expected.clone()))?;
+        atom.parse().map_err(|e: T::Err| {
+            AccessError::new(
+                AccessErrorKind::InvalidValue {
+                    expected,
+                    found: self.describe(),
+                    reason: e.to_string(),
+                },
+                self.position,
+            )
+        })
     }
 
-    pub fn try_f64(&self) -> Result<f64> {
-        self.as_f64().ok_or_else(|| self.unexpected("number"))
+    pub fn try_i64(&self) -> Result<i64, AccessError> {
+        self.try_parse()
     }
 
-    pub fn try_bool(&self) -> Result<bool> {
-        self.as_bool().ok_or_else(|| self.unexpected("boolean (0 or 1)"))
+    pub fn try_u64(&self) -> Result<u64, AccessError> {
+        self.try_parse()
     }
 
-    pub fn try_guid(&self) -> Result<&str> {
+    pub fn try_f64(&self) -> Result<f64, AccessError> {
+        self.try_parse()
+    }
+
+    pub fn try_bool(&self) -> Result<bool, AccessError> {
+        self.as_bool()
+            .ok_or_else(|| self.unexpected("boolean (0 or 1)"))
+    }
+
+    pub fn try_guid(&self) -> Result<&str, AccessError> {
         self.as_guid().ok_or_else(|| self.unexpected("GUID"))
     }
 
-    pub fn try_get(&self, idx: usize) -> Result<&Node> {
+    pub fn try_get(&self, idx: usize) -> Result<&Node, AccessError> {
         let items = self.try_list()?;
-        items.get(idx).ok_or(Error::IndexOutOfBounds {
-            index: idx,
-            len: items.len(),
+        items.get(idx).ok_or_else(|| {
+            AccessError::new(
+                AccessErrorKind::IndexOutOfBounds {
+                    index: idx,
+                    len: items.len(),
+                },
+                self.position,
+            )
         })
+    }
+
+    /// Item by a path of indices: `node.try_get_path(&[0, 2, 0])?`.
+    ///
+    /// On failure the error carries the path to the node that could not be indexed.
+    pub fn try_get_path(&self, path: &[usize]) -> Result<&Node, AccessError> {
+        let mut node = self;
+        for (depth, &idx) in path.iter().enumerate() {
+            node = node
+                .try_get(idx)
+                .map_err(|e| e.with_path(&path[..depth]))?;
+        }
+        Ok(node)
     }
 
     /// Pre-order depth-first traversal with the path from the root. Not recursive: forms can be deeply nested.
@@ -218,23 +306,36 @@ impl Node {
             Some((end, _)) => format!("{}…", &s[..end]),
             None => s.to_owned(),
         };
-        match self {
-            Node::List(items) => match items.len() {
+        match &self.value {
+            Value::List(items) => match items.len() {
                 0 => "empty list".to_owned(),
                 1 => "list of 1 item".to_owned(),
                 n => format!("list of {n} items"),
             },
-            Node::Str(s) => format!("string {:?}", clip(s)),
-            Node::Atom(s) if s.is_empty() => "empty value".to_owned(),
-            Node::Atom(s) => format!("value `{}`", clip(s)),
+            Value::Str(s) => format!("string {:?}", clip(s)),
+            Value::Atom(s) if s.is_empty() => "empty value".to_owned(),
+            Value::Atom(s) => format!("value `{}`", clip(s)),
         }
     }
 
-    fn unexpected(&self, expected: &'static str) -> Error {
-        Error::UnexpectedType {
-            expected,
-            found: self.describe(),
-        }
+    fn unexpected(&self, expected: impl Into<Cow<'static, str>>) -> AccessError {
+        AccessError::new(
+            AccessErrorKind::UnexpectedType {
+                expected: expected.into(),
+                found: self.describe(),
+            },
+            self.position,
+        )
+    }
+}
+
+/// `u32` for primitives, `Foo` instead of `my_crate::model::Foo` for user types.
+fn type_label<T>() -> Cow<'static, str> {
+    let name = std::any::type_name::<T>();
+    if name.contains('<') {
+        Cow::Borrowed(name)
+    } else {
+        Cow::Borrowed(name.rsplit("::").next().unwrap_or(name))
     }
 }
 
@@ -245,6 +346,27 @@ fn is_guid(s: &str) -> bool {
             8 | 13 | 18 | 23 => b == b'-',
             _ => b.is_ascii_hexdigit(),
         })
+}
+
+impl fmt::Debug for Node {
+    /// Shows only the value: positions would drown the tree in noise.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.value.fmt(f)
+    }
+}
+
+impl PartialEq for Node {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
+impl Eq for Node {}
+
+impl Hash for Node {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.value.hash(state);
+    }
 }
 
 impl Index<usize> for Node {
@@ -267,6 +389,15 @@ impl<'a> IntoIterator for &'a Node {
     }
 }
 
+impl From<Value> for Node {
+    fn from(value: Value) -> Self {
+        Self {
+            value,
+            position: None,
+        }
+    }
+}
+
 impl From<bool> for Node {
     fn from(b: bool) -> Self {
         Node::atom(if b { "1" } else { "0" })
@@ -277,7 +408,7 @@ macro_rules! from_number {
     ($($t:ty),*) => {$(
         impl From<$t> for Node {
             fn from(n: $t) -> Self {
-                Node::Atom(n.to_string())
+                Node::atom(n.to_string())
             }
         }
     )*};
@@ -287,13 +418,13 @@ from_number!(i8, i16, i32, i64, u8, u16, u32, u64, usize, isize);
 
 impl From<Vec<Node>> for Node {
     fn from(items: Vec<Node>) -> Self {
-        Node::List(items)
+        Value::List(items).into()
     }
 }
 
 impl<T: Into<Node>> FromIterator<T> for Node {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-        Node::List(iter.into_iter().map(Into::into).collect())
+        Node::list(iter.into_iter().map(Into::into))
     }
 }
 
@@ -319,6 +450,7 @@ mod tests {
         let node = sample();
         assert_eq!(node[0].as_i64(), Some(12));
         assert_eq!(node[0].as_f64(), Some(12.0));
+        assert_eq!(node[0].as_parsed::<u8>(), Some(12));
         assert_eq!(node.get_path(&[1, 0]).and_then(Node::as_quoted), Some("text"));
         assert_eq!(node.get_path(&[1, 0]).and_then(Node::as_atom), None);
         assert!(node.get_path(&[1, 1]).and_then(Node::as_guid).is_some());
@@ -328,6 +460,7 @@ mod tests {
         assert_eq!(node.get_path(&[1, 5]), None);
         assert_eq!(node.len(), 4);
         assert_eq!(node[0].iter().count(), 0);
+        assert_eq!(node[0].position(), None);
     }
 
     #[test]
@@ -335,9 +468,26 @@ mod tests {
         let node = sample();
         insta::assert_snapshot!(node.try_get(7).unwrap_err(), @"index 7 is out of bounds for list of length 4");
         insta::assert_snapshot!(node[0].try_list().unwrap_err(), @"expected list, found value `12`");
-        insta::assert_snapshot!(node[1].try_i64().unwrap_err(), @"expected integer, found list of 3 items");
+        insta::assert_snapshot!(node[1].try_i64().unwrap_err(), @"expected i64, found list of 3 items");
         insta::assert_snapshot!(node[3].try_guid().unwrap_err(), @"expected GUID, found empty value");
         insta::assert_snapshot!(node[1][0].try_bool().unwrap_err(), @r#"expected boolean (0 or 1), found string "text""#);
+        insta::assert_snapshot!(node[1][1].try_parse::<u32>().unwrap_err(), @"expected u32, found value `c2f34349-b1e0-4060-8abf-3c59f38ac69f`: invalid digit found in string");
+        insta::assert_snapshot!(node.try_get_path(&[1, 0, 3]).unwrap_err(), @r#"expected list, found string "text" (path [1, 0])"#);
+        insta::assert_snapshot!(node.try_get_path(&[1, 9]).unwrap_err(), @"index 9 is out of bounds for list of length 3 (path [1])");
+    }
+
+    #[test]
+    fn parsed_nodes_report_positions() {
+        let node: Node = "{1,\r\n{x,\"s\"}}".parse().unwrap();
+        insta::assert_snapshot!(node.try_get_path(&[1, 0]).unwrap().try_parse::<u8>().unwrap_err(), @"expected u8, found value `x` at line 2, column 2: invalid digit found in string");
+        insta::assert_snapshot!(node.try_get_path(&[1, 1, 0]).unwrap_err(), @r#"expected list, found string "s" at line 2, column 4 (path [1, 1])"#);
+        insta::assert_snapshot!(node[1].try_get(5).unwrap_err(), @"index 5 is out of bounds for list of length 2 at line 2, column 1");
+    }
+
+    #[test]
+    fn equality_ignores_positions() {
+        let parsed: Node = "{1,\"a\"}".parse().unwrap();
+        assert_eq!(parsed, Node::list([Node::from(1), Node::string("a")]));
     }
 
     #[test]
@@ -364,6 +514,14 @@ mod tests {
     #[should_panic(expected = "cannot index node: expected list, found value `12`")]
     fn index_panics_with_message() {
         let _ = &sample()[0][0];
+    }
+
+    #[test]
+    fn type_labels_are_short() {
+        struct Local;
+        assert_eq!(type_label::<u32>(), "u32");
+        assert_eq!(type_label::<Local>(), "Local");
+        assert_eq!(type_label::<String>(), "String");
     }
 
     #[test]

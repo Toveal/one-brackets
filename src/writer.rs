@@ -4,7 +4,7 @@
 use std::fmt;
 use std::io;
 
-use crate::Node;
+use crate::{Node, Value};
 
 impl Node {
     /// Writes the bracket file text to any [`io::Write`].
@@ -85,12 +85,12 @@ fn open<'a>(
     out: &mut impl fmt::Write,
     stack: &mut Vec<(&'a [Node], usize)>,
 ) -> fmt::Result {
-    match node {
-        Node::List(items) => {
+    match node.value() {
+        Value::List(items) => {
             out.write_char('{')?;
             stack.push((items, 0));
         }
-        Node::Str(s) => {
+        Value::Str(s) => {
             out.write_char('"')?;
             for (i, part) in s.split('"').enumerate() {
                 if i > 0 {
@@ -100,7 +100,7 @@ fn open<'a>(
             }
             out.write_char('"')?;
         }
-        Node::Atom(s) => out.write_str(s)?,
+        Value::Atom(s) => out.write_str(s)?,
     }
     Ok(())
 }

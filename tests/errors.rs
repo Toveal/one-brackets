@@ -43,13 +43,18 @@ fn open_error_names_the_file() {
 
 #[test]
 fn access_errors() {
-    let node: Node = "{1,\"text\",{}}".parse().unwrap();
+    let node: Node = "{1,\"text\",{},
+{300,-1}}".parse().unwrap();
     let report = [
-        node.try_get(3).unwrap_err(),
+        node.try_get(9).unwrap_err(),
         node[0].try_get(0).unwrap_err(),
         node[1].try_i64().unwrap_err(),
         node[2].try_str().unwrap_err(),
         node[0].try_guid().unwrap_err(),
+        node[3][0].try_parse::<u8>().unwrap_err(),
+        node[3][1].try_parse::<u32>().unwrap_err(),
+        node.try_get_path(&[3, 0, 1]).unwrap_err(),
+        node.try_get_path(&[2, 0]).unwrap_err(),
     ]
     .iter()
     .map(ToString::to_string)

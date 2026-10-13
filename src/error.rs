@@ -1,5 +1,7 @@
-//! Parse and node access errors.
+//! Errors: [`ParseError`] for broken input, [`AccessError`] for unexpected structure,
+//! and [`Error`] that wraps both for code doing parsing and mapping in one go.
 
+use std::borrow::Cow;
 use std::fmt;
 use std::io;
 use std::path::PathBuf;
@@ -35,9 +37,10 @@ impl fmt::Display for Position {
     }
 }
 
+/// The input could not be read or is not valid bracket text.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub enum Error {
+pub enum ParseError {
     #[error("I/O error while reading input: {0}")]
     Io(#[from] io::Error),
 
@@ -64,30 +67,120 @@ pub enum Error {
 
     #[error("invalid UTF-8 in {context} starting at {at}")]
     InvalidUtf8 { context: &'static str, at: Position },
-
-    #[error("expected {expected}, found {found}")]
-    UnexpectedType {
-        expected: &'static str,
-        found: String,
-    },
-
-    #[error("index {index} is out of bounds for list of length {len}")]
-    IndexOutOfBounds { index: usize, len: usize },
 }
 
-impl Error {
-    /// Position in the input, if the error occurred while parsing.
+impl ParseError {
+    /// Position in the input where the problem was found, if known.
     pub fn position(&self) -> Option<Position> {
         match self {
-            Error::UnclosedList { at, .. }
-            | Error::UnexpectedChar { at, .. }
-            | Error::UnmatchedClose { at }
-            | Error::TrailingData { at }
-            | Error::InvalidUtf8 { at, .. } => Some(*at),
-            Error::UnclosedString { start } => Some(*start),
+            ParseError::UnclosedList { at, .. }
+            | ParseError::UnexpectedChar { at, .. }
+            | ParseError::UnmatchedClose { at }
+            | ParseError::TrailingData { at }
+            | ParseError::InvalidUtf8 { at, .. } => Some(*at),
+            ParseError::UnclosedString { start } => Some(*start),
             _ => None,
         }
     }
+}
+
+/// The text is valid, but a node does not have the expected shape.
+///
+/// Carries the position of the offending node (for parsed nodes) and,
+/// for [`Node::try_get_path`](crate::Node::try_get_path), the path to it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessError(Box<AccessErrorInner>);
+
+/// Boxed to keep `Result<&Node, AccessError>` small on the happy path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AccessErrorInner {
+    kind: AccessErrorKind,
+    position: Option<Position>,
+    path: Vec<usize>,
+}
+
+/// What exactly went wrong in an [`AccessError`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AccessErrorKind {
+    /// The node is of another kind (list instead of value, string instead of atom...).
+    UnexpectedType {
+        expected: Cow<'static, str>,
+        found: String,
+    },
+    /// The list is shorter than requested.
+    IndexOutOfBounds { index: usize, len: usize },
+    /// The value has the right kind but cannot be converted.
+    InvalidValue {
+        expected: Cow<'static, str>,
+        found: String,
+        reason: String,
+    },
+}
+
+impl AccessError {
+    pub(crate) fn new(kind: AccessErrorKind, position: Option<Position>) -> Self {
+        Self(Box::new(AccessErrorInner {
+            kind,
+            position,
+            path: Vec::new(),
+        }))
+    }
+
+    pub(crate) fn with_path(mut self, path: &[usize]) -> Self {
+        self.0.path = path.to_vec();
+        self
+    }
+
+    pub fn kind(&self) -> &AccessErrorKind {
+        &self.0.kind
+    }
+
+    /// Position of the offending node; `None` for nodes built in code.
+    pub fn position(&self) -> Option<Position> {
+        self.0.position
+    }
+
+    /// Path to the offending node relative to the node `try_get_path` was called on.
+    pub fn path(&self) -> &[usize] {
+        &self.0.path
+    }
+}
+
+impl fmt::Display for AccessError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let inner = &self.0;
+        match &inner.kind {
+            AccessErrorKind::UnexpectedType { expected, found }
+            | AccessErrorKind::InvalidValue {
+                expected, found, ..
+            } => write!(f, "expected {expected}, found {found}")?,
+            AccessErrorKind::IndexOutOfBounds { index, len } => {
+                write!(f, "index {index} is out of bounds for list of length {len}")?
+            }
+        }
+        if let Some(position) = inner.position {
+            write!(f, " at {position}")?;
+        }
+        if !inner.path.is_empty() {
+            write!(f, " (path {:?})", inner.path)?;
+        }
+        if let AccessErrorKind::InvalidValue { reason, .. } = &inner.kind {
+            write!(f, ": {reason}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for AccessError {}
+
+/// Either kind of error, for code that parses and maps in one function.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error(transparent)]
+    Parse(#[from] ParseError),
+    #[error(transparent)]
+    Access(#[from] AccessError),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;

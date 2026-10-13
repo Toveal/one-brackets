@@ -56,18 +56,27 @@ fn streaming_matches_buffered() {
 /// Example of a user model on top of `Node`.
 #[derive(Debug)]
 struct Root {
-    version: i64,
+    version: u32,
     object: String,
 }
 
 impl TryFrom<&Node> for Root {
-    type Error = one_brackets::Error;
+    type Error = one_brackets::AccessError;
 
     fn try_from(node: &Node) -> Result<Self, Self::Error> {
         Ok(Root {
-            version: node.try_get(0)?.try_i64()?,
+            version: node.try_get(0)?.try_parse()?,
             object: node.try_get(1)?.try_guid()?.to_owned(),
         })
+    }
+}
+
+/// Parsing and mapping in one step: `one_brackets::Error` accepts both error kinds.
+impl std::str::FromStr for Root {
+    type Err = one_brackets::Error;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Ok(Root::try_from(&text.parse::<Node>()?)?)
     }
 }
 
@@ -79,5 +88,10 @@ fn maps_to_user_type() {
     assert_eq!(root.object, "c2f34349-b1e0-4060-8abf-3c59f38ac69f");
 
     let version = Node::try_from(std::path::Path::new("tests/fixtures/version.txt")).unwrap();
-    insta::assert_snapshot!(Root::try_from(&version).unwrap_err(), @"expected integer, found list of 3 items");
+    insta::assert_snapshot!(Root::try_from(&version).unwrap_err(), @"expected u32, found list of 3 items at line 2, column 1");
+
+    let root: Root = fs::read_to_string("tests/fixtures/root.txt").unwrap().parse().unwrap();
+    assert_eq!(root.version, 2);
+    insta::assert_snapshot!("{2,".parse::<Root>().unwrap_err(), @"unexpected end of input at line 1, column 4: list opened at line 1, column 1 is not closed");
+    insta::assert_snapshot!("{2,\"x\"}".parse::<Root>().unwrap_err(), @r#"expected GUID, found string "x" at line 1, column 4"#);
 }

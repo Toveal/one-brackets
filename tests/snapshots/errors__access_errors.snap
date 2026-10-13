@@ -2,8 +2,12 @@
 source: tests/errors.rs
 expression: report
 ---
-index 3 is out of bounds for list of length 3
-expected list, found value `1`
-expected integer, found string "text"
-expected string or value, found empty list
-expected GUID, found value `1`
+index 9 is out of bounds for list of length 4 at line 1, column 1
+expected list, found value `1` at line 1, column 2
+expected i64, found string "text" at line 1, column 4
+expected string or value, found empty list at line 1, column 11
+expected GUID, found value `1` at line 1, column 2
+expected u8, found value `300` at line 2, column 2: number too large to fit in target type
+expected u32, found value `-1` at line 2, column 6: invalid digit found in string
+expected list, found value `300` at line 2, column 2 (path [3, 0])
+index 0 is out of bounds for list of length 0 at line 1, column 11 (path [2])

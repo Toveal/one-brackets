@@ -5,7 +5,9 @@ use std::io::{self, BufRead, BufReader, Read};
 use std::path::Path;
 use std::str::FromStr;
 
-use crate::{Error, Node, Position, Result};
+use crate::{Node, ParseError, Position, Value};
+
+type Result<T> = std::result::Result<T, ParseError>;
 
 const BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
 const BASE64: &[u8] = b"#base64:";
@@ -21,7 +23,7 @@ impl Node {
 }
 
 impl TryFrom<&str> for Node {
-    type Error = Error;
+    type Error = ParseError;
 
     fn try_from(text: &str) -> Result<Node> {
         parse(text.as_bytes())
@@ -29,7 +31,7 @@ impl TryFrom<&str> for Node {
 }
 
 impl TryFrom<String> for Node {
-    type Error = Error;
+    type Error = ParseError;
 
     fn try_from(text: String) -> Result<Node> {
         parse(text.as_bytes())
@@ -37,7 +39,7 @@ impl TryFrom<String> for Node {
 }
 
 impl TryFrom<&[u8]> for Node {
-    type Error = Error;
+    type Error = ParseError;
 
     fn try_from(bytes: &[u8]) -> Result<Node> {
         parse(bytes)
@@ -45,7 +47,7 @@ impl TryFrom<&[u8]> for Node {
 }
 
 impl TryFrom<Vec<u8>> for Node {
-    type Error = Error;
+    type Error = ParseError;
 
     fn try_from(bytes: Vec<u8>) -> Result<Node> {
         parse(bytes.as_slice())
@@ -53,7 +55,7 @@ impl TryFrom<Vec<u8>> for Node {
 }
 
 impl TryFrom<File> for Node {
-    type Error = Error;
+    type Error = ParseError;
 
     fn try_from(file: File) -> Result<Node> {
         Node::from_reader(file)
@@ -61,10 +63,10 @@ impl TryFrom<File> for Node {
 }
 
 impl TryFrom<&Path> for Node {
-    type Error = Error;
+    type Error = ParseError;
 
     fn try_from(path: &Path) -> Result<Node> {
-        let file = File::open(path).map_err(|source| Error::Open {
+        let file = File::open(path).map_err(|source| ParseError::Open {
             path: path.to_owned(),
             source,
         })?;
@@ -73,7 +75,7 @@ impl TryFrom<&Path> for Node {
 }
 
 impl FromStr for Node {
-    type Err = Error;
+    type Err = ParseError;
 
     fn from_str(text: &str) -> Result<Node> {
         parse(text.as_bytes())
@@ -87,15 +89,15 @@ fn parse<R: BufRead>(reader: R) -> Result<Node> {
     parser.input.skip_bom()?;
     parser.input.skip_ws()?;
     if parser.input.peek()?.is_none() {
-        return Err(Error::EmptyInput);
+        return Err(ParseError::EmptyInput);
     }
     let node = parser.value()?;
     parser.input.skip_ws()?;
     let at = parser.input.pos;
     match parser.input.peek()? {
         None => Ok(node),
-        Some(b'}') => Err(Error::UnmatchedClose { at }),
-        Some(_) => Err(Error::TrailingData { at }),
+        Some(b'}') => Err(ParseError::UnmatchedClose { at }),
+        Some(_) => Err(ParseError::TrailingData { at }),
     }
 }
 
@@ -230,22 +232,22 @@ impl<R: BufRead> Parser<R> {
                     }
                     Some(b'}') => {
                         self.input.bump()?;
-                        let (_, items) = stack.pop().expect("list stack is not empty");
-                        let done = Node::List(items);
+                        let (opened, items) = stack.pop().expect("list stack is not empty");
+                        let done = Node::parsed(Value::List(items), opened);
                         match stack.last_mut() {
                             Some((_, parent)) => parent.push(done),
                             None => return Ok(done),
                         }
                     }
                     Some(_) => {
-                        return Err(Error::UnexpectedChar {
+                        return Err(ParseError::UnexpectedChar {
                             found: self.char_at_cursor()?,
                             at,
                         });
                     }
                     None => {
                         let (opened, _) = stack.last().expect("list stack is not empty");
-                        return Err(Error::UnclosedList {
+                        return Err(ParseError::UnclosedList {
                             opened: *opened,
                             at,
                         });
@@ -269,7 +271,7 @@ impl<R: BufRead> Parser<R> {
         let mut bytes = Vec::new();
         loop {
             match self.input.bump()? {
-                None => return Err(Error::UnclosedString { start }),
+                None => return Err(ParseError::UnclosedString { start }),
                 Some(b'"') => {
                     if self.input.peek()? == Some(b'"') {
                         self.input.bump()?;
@@ -281,11 +283,11 @@ impl<R: BufRead> Parser<R> {
                 Some(b) => bytes.push(b),
             }
         }
-        let value = String::from_utf8(bytes).map_err(|_| Error::InvalidUtf8 {
+        let value = String::from_utf8(bytes).map_err(|_| ParseError::InvalidUtf8 {
             context: "quoted string",
             at: start,
         })?;
-        Ok(Node::Str(value))
+        Ok(Node::parsed(Value::Str(value), start))
     }
 
     fn atom(&mut self) -> Result<Node> {
@@ -304,11 +306,11 @@ impl<R: BufRead> Parser<R> {
             bytes.push(b);
             self.input.bump()?;
         }
-        let value = String::from_utf8(bytes).map_err(|_| Error::InvalidUtf8 {
+        let value = String::from_utf8(bytes).map_err(|_| ParseError::InvalidUtf8 {
             context: "value",
             at: start,
         })?;
-        Ok(Node::Atom(value))
+        Ok(Node::parsed(Value::Atom(value), start))
     }
 
     /// Character under the cursor (for error messages); may span several bytes.
@@ -365,10 +367,10 @@ mod tests {
         let node: Node = "\u{feff}{1,{\"a \"\"b\"\"\",x},{},}".parse().unwrap();
         assert_eq!(
             node,
-            Node::List(vec![
+            Node::list([
                 atom("1"),
-                Node::List(vec![Node::Str("a \"b\"".into()), atom("x")]),
-                Node::List(vec![]),
+                Node::list([Node::string("a \"b\""), atom("x")]),
+                Node::list([]),
                 atom(""),
             ])
         );
@@ -415,7 +417,7 @@ mod tests {
             }
         }
         let err = Node::from_reader(Failing).unwrap_err();
-        assert!(matches!(err, Error::Io(_)));
+        assert!(matches!(err, ParseError::Io(_)));
         insta::assert_snapshot!(err, @"I/O error while reading input: disk is on fire");
     }
 
