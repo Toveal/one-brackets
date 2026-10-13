@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Parsing is about 10% faster: list items are collected in one reused buffer and moved
+  into a `Vec` of the exact size, and single bytes and separators skip the generic scanning.
+  Parsed trees are also more compact, which makes writing about 15% faster.
 - Documentation states that whitespace between items is not kept on writing and that
   serde mapping is recursive.
 

@@ -59,9 +59,7 @@ impl FromStr for Node {
 }
 
 fn parse<R: BufRead>(reader: R) -> Result<Node> {
-    let mut parser = Parser {
-        input: Input::new(reader),
-    };
+    let mut parser = Parser::new(reader);
     parser.input.skip_bom()?;
     parser.input.skip_ws()?;
     if parser.input.peek()?.is_none() {
@@ -114,9 +112,7 @@ enum State {
 impl<R: Read> Values<R> {
     pub fn new(reader: R) -> Self {
         Values {
-            parser: Parser {
-                input: Input::new(BufReader::new(reader)),
-            },
+            parser: Parser::new(BufReader::new(reader)),
             state: State::Fresh,
         }
     }
@@ -251,7 +247,7 @@ impl<R: BufRead> Input<R> {
             Some(self.pending.remove(0))
         };
         if let Some(b) = byte {
-            advance(&mut self.pos, &[b]);
+            advance_byte(&mut self.pos, b);
         }
         Ok(byte)
     }
@@ -276,6 +272,10 @@ impl<R: BufRead> Input<R> {
     }
 
     fn skip_ws(&mut self) -> Result<()> {
+        // Most separators are not followed by whitespace.
+        if self.peek()?.is_some_and(|b| !b.is_ascii_whitespace()) {
+            return Ok(());
+        }
         self.scan(|b| !b.is_ascii_whitespace(), None)?;
         Ok(())
     }
@@ -328,9 +328,21 @@ impl<R: BufRead> Input<R> {
 
 struct Parser<R> {
     input: Input<R>,
+    /// Items of all open lists, innermost last; reused between values.
+    ///
+    /// A closed list takes its items out into a `Vec` of the exact size,
+    /// so lists do not grow by reallocation.
+    items: Vec<Node>,
 }
 
 impl<R: BufRead> Parser<R> {
+    fn new(inner: R) -> Self {
+        Self {
+            input: Input::new(inner),
+            items: Vec::new(),
+        }
+    }
+
     fn value(&mut self) -> Result<Node> {
         match self.input.peek()? {
             Some(b'{') => self.list(),
@@ -340,21 +352,23 @@ impl<R: BufRead> Parser<R> {
 
     /// Lists are parsed without recursion: forms can be deeply nested.
     fn list(&mut self) -> Result<Node> {
-        // (position of `{`, collected items)
-        let mut stack: Vec<(Position, Vec<Node>)> = Vec::new();
+        // (position of `{`, index of its first item in `self.items`)
+        let mut stack: Vec<(Position, usize)> = Vec::new();
+        // Left over from a value that failed to parse.
+        self.items.clear();
         loop {
             // The cursor is always on `{` here.
             let opened = self.input.pos;
             self.input.bump()?;
             self.input.skip_ws()?;
-            stack.push((opened, Vec::new()));
+            stack.push((opened, self.items.len()));
             match self.input.peek()? {
                 // Empty list `{}`; the shared closing code follows.
                 Some(b'}') => {}
                 Some(b'{') => continue,
                 _ => {
                     let item = self.scalar()?;
-                    push(&mut stack, item);
+                    self.items.push(item);
                 }
             }
             // Separators and closing brackets until a new nested list starts.
@@ -369,16 +383,17 @@ impl<R: BufRead> Parser<R> {
                             break;
                         }
                         let item = self.scalar()?;
-                        push(&mut stack, item);
+                        self.items.push(item);
                     }
                     Some(b'}') => {
                         self.input.bump()?;
-                        let (opened, items) = stack.pop().expect("list stack is not empty");
+                        let (opened, first) = stack.pop().expect("list stack is not empty");
+                        let items = self.items.drain(first..).collect();
                         let done = Node::parsed(Value::List(items), opened);
-                        match stack.last_mut() {
-                            Some((_, parent)) => parent.push(done),
-                            None => return Ok(done),
+                        if stack.is_empty() {
+                            return Ok(done);
                         }
+                        self.items.push(done);
                     }
                     Some(_) => {
                         return Err(ParseError::UnexpectedChar {
@@ -465,6 +480,18 @@ impl<R: BufRead> Parser<R> {
     }
 }
 
+/// Moves the position over one byte already read.
+fn advance_byte(pos: &mut Position, byte: u8) {
+    pos.offset += 1;
+    if byte == b'\n' {
+        pos.line += 1;
+        pos.column = 1;
+    } else if byte & 0xC0 != 0x80 {
+        // UTF-8 continuation bytes do not advance the column.
+        pos.column += 1;
+    }
+}
+
 /// Moves the position over bytes already read.
 fn advance(pos: &mut Position, bytes: &[u8]) {
     // UTF-8 continuation bytes do not advance the column.
@@ -477,14 +504,6 @@ fn advance(pos: &mut Position, bytes: &[u8]) {
         }
         None => pos.column += chars(bytes),
     }
-}
-
-fn push(stack: &mut [(Position, Vec<Node>)], item: Node) {
-    stack
-        .last_mut()
-        .expect("list stack is not empty")
-        .1
-        .push(item);
 }
 
 #[cfg(test)]
