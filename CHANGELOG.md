@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a deeply nested tree (e.g. 100 000 levels) no longer overflows the stack. Parsing and
   writing were already non-recursive. The `Debug` output is unchanged.
 
+### Removed
+
+- `TryFrom<String>`, `TryFrom<Vec<u8>>` and `TryFrom<File>` for `Node`: use `&str`, `&[u8]`
+  and `Node::from_reader` instead.
+- `From<Node>` for `String` and `Vec<u8>`: use `to_string()` or `From<&Node>`.
+
 ### Changed
 
 - Documentation states that whitespace between items is not kept on writing and that

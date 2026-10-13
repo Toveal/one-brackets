@@ -30,35 +30,11 @@ impl TryFrom<&str> for Node {
     }
 }
 
-impl TryFrom<String> for Node {
-    type Error = ParseError;
-
-    fn try_from(text: String) -> Result<Node> {
-        parse(text.as_bytes())
-    }
-}
-
 impl TryFrom<&[u8]> for Node {
     type Error = ParseError;
 
     fn try_from(bytes: &[u8]) -> Result<Node> {
         parse(bytes)
-    }
-}
-
-impl TryFrom<Vec<u8>> for Node {
-    type Error = ParseError;
-
-    fn try_from(bytes: Vec<u8>) -> Result<Node> {
-        parse(bytes.as_slice())
-    }
-}
-
-impl TryFrom<File> for Node {
-    type Error = ParseError;
-
-    fn try_from(file: File) -> Result<Node> {
-        Node::from_reader(file)
     }
 }
 
@@ -563,7 +539,7 @@ mod tests {
     fn deep_nesting_without_recursion() {
         let depth = 5_000;
         let text = format!("{}{}", "{".repeat(depth), "}".repeat(depth));
-        assert!(Node::try_from(text).is_ok());
+        assert!(Node::try_from(text.as_str()).is_ok());
     }
 
     #[test]

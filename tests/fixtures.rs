@@ -51,7 +51,7 @@ fn streaming_matches_buffered() {
         let streamed = Node::from_reader(ByteByByte(&bytes)).unwrap();
         assert_eq!(
             streamed,
-            Node::try_from(bytes).unwrap(),
+            Node::try_from(bytes.as_slice()).unwrap(),
             "{}",
             path.display()
         );
