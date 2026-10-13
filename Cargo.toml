@@ -11,6 +11,10 @@ serde = ["dep:serde"]
 serde = { version = "1", optional = true }
 thiserror = "2"
 
+[[example]]
+name = "cluster"
+required-features = ["serde"]
+
 [dev-dependencies]
 insta = { version = "1", features = ["glob"] }
 serde = { version = "1", features = ["derive"] }

@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 
-use one_brackets::{Node, Tail, from_node, from_str, to_node, to_string};
+use one_brackets::{Node, Rest, from_node, from_str, to_node, to_string};
 use serde::{Deserialize, Serialize};
 
 /// `root.txt`: `{2,<object GUID>,}`.
@@ -26,7 +26,7 @@ struct VersionFile {
 struct Version {
     major: u32,
     #[serde(default)]
-    rest: Tail,
+    rest: Rest,
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn writes_fixtures_back_byte_for_byte() {
 }
 
 #[test]
-fn tail_is_optional_and_keeps_order() {
+fn rest_is_optional_and_keeps_order() {
     let version: Version = from_str("{216}").unwrap();
     assert!(version.rest.is_empty());
 
@@ -75,7 +75,7 @@ fn tail_is_optional_and_keeps_order() {
 }
 
 #[test]
-fn extra_items_are_ignored_without_tail() {
+fn extra_items_are_ignored_without_rest() {
     #[derive(Debug, Deserialize)]
     struct Pair(u8, u8);
     let Pair(a, b) = from_str("{1,2,3,{4}}").unwrap();
@@ -196,8 +196,8 @@ fn other_formats_see_tagged_values() {
     assert_eq!(back, node);
     assert_eq!(back.position(), None);
 
-    let tail = serde_json::to_string(&Tail(vec![Node::from(1)])).unwrap();
-    assert_eq!(tail, r#"[{"Atom":"1"}]"#);
+    let rest = serde_json::to_string(&Rest(vec![Node::from(1)])).unwrap();
+    assert_eq!(rest, r#"[{"Atom":"1"}]"#);
 }
 
 #[test]
@@ -245,4 +245,33 @@ fn errors_point_at_the_node() {
     }
     insta::assert_snapshot!(from_str::<Vec<Kind>>("{A,\r\nC}").unwrap_err(), @"unknown variant `C`, expected `A` or `B` at line 2, column 1 (path [1])");
     insta::assert_snapshot!(from_str::<Vec<Kind>>("{A,\r\n{1}}").unwrap_err(), @"expected a list {variant,value} for a variant with data at line 2, column 1 (path [1])");
+}
+
+#[test]
+fn counted_lists() {
+    use one_brackets::Counted;
+
+    #[derive(Debug, PartialEq, Deserialize, Serialize)]
+    struct Form {
+        id: u8,
+        items: Counted<(u8, String)>,
+    }
+
+    let text = "{1,\r\n{2,\r\n{1,\"a\"},\r\n{2,\"b\"}\r\n}\r\n}";
+    let form: Form = from_str(text).unwrap();
+    assert_eq!(form.items[1], (2, "b".to_owned()));
+    assert_eq!(to_string(&form).unwrap(), text);
+    assert_eq!(to_string(&Counted::<u8>::default()).unwrap(), "{0}");
+
+    let errors = [
+        "{1,{3,{1,\"a\"}}}",
+        "{1,{1,{1,\"a\"},{2,\"b\"}}}",
+        "{1,{x}}",
+    ]
+    .map(|text| from_str::<Form>(text).unwrap_err().to_string());
+    insta::assert_snapshot!(errors.join("\n"), @"
+    list declares 3 items, but has 1 at line 1, column 4 (path [1])
+    list declares 1 item, but has 2 at line 1, column 4 (path [1])
+    expected u64, found value `x` at line 1, column 5 (path [1, 0]): invalid digit found in string
+    ");
 }

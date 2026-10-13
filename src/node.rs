@@ -57,6 +57,12 @@ impl Node {
         Value::Str(value.into()).into()
     }
 
+    /// A counted list `{count,item1,item2,...}`, the common 1C shape.
+    pub fn counted(items: impl IntoIterator<Item = Node>) -> Self {
+        let items: Vec<Node> = items.into_iter().collect();
+        Node::list(std::iter::once(Node::from(items.len())).chain(items))
+    }
+
     pub fn value(&self) -> &Value {
         &self.value
     }
@@ -280,6 +286,27 @@ impl Node {
             node = node.try_get(idx).map_err(|e| e.with_path(&path[..depth]))?;
         }
         Ok(node)
+    }
+
+    /// Items of a counted list `{count,item1,item2,...}`: `{2,a,b}` gives `[a, b]`.
+    ///
+    /// Fails if the count is not a number or does not match the number of items.
+    pub fn try_counted(&self) -> Result<&[Node], AccessError> {
+        let declared: usize = self
+            .try_get(0)?
+            .try_parse()
+            .map_err(|e| e.with_path(&[0]))?;
+        let items = &self.try_list()?[1..];
+        if items.len() != declared {
+            return Err(AccessError::new(
+                AccessErrorKind::CountMismatch {
+                    declared,
+                    actual: items.len(),
+                },
+                self.position,
+            ));
+        }
+        Ok(items)
     }
 
     /// Pre-order depth-first traversal with the path from the root. Not recursive: forms can be deeply nested.
@@ -525,6 +552,22 @@ mod tests {
         assert_eq!(type_label::<u32>(), "u32");
         assert_eq!(type_label::<Local>(), "Local");
         assert_eq!(type_label::<String>(), "String");
+    }
+
+    #[test]
+    fn counted_lists() {
+        let node: Node = "{2,a,\r\n{b}}".parse().unwrap();
+        assert_eq!(
+            node.try_counted().unwrap(),
+            [Node::atom("a"), Node::list([Node::atom("b")])]
+        );
+        assert_eq!(Node::counted(node.try_counted().unwrap().to_vec()), node);
+        assert_eq!(Node::counted([]).to_string(), "{0}");
+
+        let bad: Node = "{\r\n{x},\r\n{3,a},\r\n{}}".parse().unwrap();
+        insta::assert_snapshot!(bad[0].try_counted().unwrap_err(), @"expected usize, found value `x` at line 2, column 2 (path [0]): invalid digit found in string");
+        insta::assert_snapshot!(bad[1].try_counted().unwrap_err(), @"list declares 3 items, but has 1 at line 3, column 1");
+        insta::assert_snapshot!(bad[2].try_counted().unwrap_err(), @"index 0 is out of bounds for list of length 0 at line 4, column 1");
     }
 
     #[test]

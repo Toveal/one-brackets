@@ -62,7 +62,7 @@
 //! [`Error`] wraps both, so `?` works for either in one function.
 //!
 //! With the `serde` feature user types map to lists by field order:
-//! see `from_node`, `to_node`, `Tail` and `atom`.
+//! see `from_node`, `to_node`, `Rest`, `Counted` and `atom`.
 
 #[cfg(feature = "serde")]
 mod de;
@@ -84,4 +84,4 @@ pub use node::{Node, Value};
 #[cfg(feature = "serde")]
 pub use ser::{to_node, to_string};
 #[cfg(feature = "serde")]
-pub use serde_impls::{Tail, atom};
+pub use serde_impls::{Counted, Rest, atom};

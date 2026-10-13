@@ -1,22 +1,24 @@
-//! Serde support for the tree types and the helpers [`Tail`] and [`atom`].
+//! Serde support for the tree types and the helpers [`Rest`], [`Counted`] and [`atom`].
 //!
 //! The bracket format has no field names, only order, so the special types talk to
 //! the crate's serializer and deserializer through reserved newtype and enum names.
 //! Other formats see them as plain newtypes and enums.
 
 use std::fmt;
+use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 
 use serde::de::{self, Deserializer, EnumAccess, VariantAccess, Visitor};
-use serde::ser::Serializer;
+use serde::ser::{SerializeSeq, Serializer};
 use serde::{Deserialize, Serialize};
 
 use crate::de::take_smuggled_node;
+use crate::error::count_mismatch;
 use crate::{Node, Value};
 
 pub(crate) const NODE: &str = "$one_brackets::Node";
 pub(crate) const VALUE: &str = "$one_brackets::Value";
-pub(crate) const TAIL: &str = "$one_brackets::Tail";
+pub(crate) const REST: &str = "$one_brackets::Rest";
 pub(crate) const ATOM: &str = "$one_brackets::Atom";
 
 const VARIANTS: &[&str] = &["List", "Str", "Atom"];
@@ -24,19 +26,19 @@ const VARIANTS: &[&str] = &["List", "Str", "Atom"];
 /// Remaining items of a list after the preceding fields, kept as is.
 ///
 /// Lists map to structs by position, and items past the last field are ignored.
-/// Put a `Tail` as the last field to keep them: it is filled from the rest of the list
+/// Put a `Rest` as the last field to keep them: it is filled from the rest of the list
 /// and written back in place, so unknown items survive a read-write round trip.
 /// Mark it `#[serde(default)]`: a list may have no extra items at all.
 ///
 /// ```
-/// use one_brackets::{Node, Tail};
+/// use one_brackets::{Node, Rest};
 /// use serde::{Deserialize, Serialize};
 ///
 /// #[derive(Deserialize, Serialize)]
 /// struct Version {
 ///     major: u32,
 ///     #[serde(default)]
-///     rest: Tail,
+///     rest: Rest,
 /// }
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -49,9 +51,9 @@ const VARIANTS: &[&str] = &["List", "Str", "Atom"];
 /// # }
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
-pub struct Tail(pub Vec<Node>);
+pub struct Rest(pub Vec<Node>);
 
-impl Deref for Tail {
+impl Deref for Rest {
     type Target = Vec<Node>;
 
     fn deref(&self) -> &Vec<Node> {
@@ -59,49 +61,175 @@ impl Deref for Tail {
     }
 }
 
-impl DerefMut for Tail {
+impl DerefMut for Rest {
     fn deref_mut(&mut self) -> &mut Vec<Node> {
         &mut self.0
     }
 }
 
-impl From<Vec<Node>> for Tail {
+impl From<Vec<Node>> for Rest {
     fn from(items: Vec<Node>) -> Self {
-        Tail(items)
+        Rest(items)
     }
 }
 
-impl Serialize for Tail {
+impl Serialize for Rest {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_newtype_struct(TAIL, &self.0)
+        serializer.serialize_newtype_struct(REST, &self.0)
     }
 }
 
-impl<'de> Deserialize<'de> for Tail {
+impl<'de> Deserialize<'de> for Rest {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct TailVisitor;
+        struct RestVisitor;
 
-        impl<'de> Visitor<'de> for TailVisitor {
-            type Value = Tail;
+        impl<'de> Visitor<'de> for RestVisitor {
+            type Value = Rest;
 
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.write_str("remaining list items")
             }
 
-            fn visit_newtype_struct<D: Deserializer<'de>>(self, d: D) -> Result<Tail, D::Error> {
-                Vec::deserialize(d).map(Tail)
+            fn visit_newtype_struct<D: Deserializer<'de>>(self, d: D) -> Result<Rest, D::Error> {
+                Vec::deserialize(d).map(Rest)
             }
 
-            fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Tail, A::Error> {
+            fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Rest, A::Error> {
                 let mut items = Vec::new();
                 while let Some(item) = seq.next_element()? {
                     items.push(item);
                 }
-                Ok(Tail(items))
+                Ok(Rest(items))
             }
         }
 
-        deserializer.deserialize_newtype_struct(TAIL, TailVisitor)
+        deserializer.deserialize_newtype_struct(REST, RestVisitor)
+    }
+}
+
+/// A counted list `{count,item1,item2,...}`, the common 1C shape.
+///
+/// The count is checked on reading and written on serialization.
+/// For the [`Node`] API see [`Node::try_counted`] and [`Node::counted`].
+///
+/// ```
+/// use one_brackets::Counted;
+/// use serde::Deserialize;
+///
+/// #[derive(Debug, Deserialize)]
+/// struct Server(String, u16);
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let servers: Counted<Server> = one_brackets::from_str("{2,{\"a\",1541},{\"b\",1541}}")?;
+/// assert_eq!(servers[1].0, "b");
+///
+/// let err = one_brackets::from_str::<Counted<Server>>("{3,{\"a\",1541}}").unwrap_err();
+/// assert_eq!(err.to_string(), "list declares 3 items, but has 1 at line 1, column 1");
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Counted<T>(pub Vec<T>);
+
+impl<T> Default for Counted<T> {
+    fn default() -> Self {
+        Counted(Vec::new())
+    }
+}
+
+impl<T> Deref for Counted<T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Vec<T> {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for Counted<T> {
+    fn deref_mut(&mut self) -> &mut Vec<T> {
+        &mut self.0
+    }
+}
+
+impl<T> From<Vec<T>> for Counted<T> {
+    fn from(items: Vec<T>) -> Self {
+        Counted(items)
+    }
+}
+
+impl<T> FromIterator<T> for Counted<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        Counted(iter.into_iter().collect())
+    }
+}
+
+impl<T> IntoIterator for Counted<T> {
+    type Item = T;
+    type IntoIter = std::vec::IntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a Counted<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl<T: Serialize> Serialize for Counted<T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut seq = serializer.serialize_seq(Some(self.0.len() + 1))?;
+        seq.serialize_element(&self.0.len())?;
+        for item in &self.0 {
+            seq.serialize_element(item)?;
+        }
+        seq.end()
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for Counted<T> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct CountedVisitor<T>(PhantomData<T>);
+
+        impl<'de, T: Deserialize<'de>> Visitor<'de> for CountedVisitor<T> {
+            type Value = Counted<T>;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a counted list {count,items...}")
+            }
+
+            fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Counted<T>, A::Error> {
+                let declared: usize = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+                let mut items = Vec::with_capacity(declared.min(4096));
+                while items.len() < declared {
+                    match seq.next_element()? {
+                        Some(item) => items.push(item),
+                        None => return Err(mismatch(declared, items.len())),
+                    }
+                }
+                let mut actual = declared;
+                while seq.next_element::<de::IgnoredAny>()?.is_some() {
+                    actual += 1;
+                }
+                if actual != declared {
+                    return Err(mismatch(declared, actual));
+                }
+                Ok(Counted(items))
+            }
+        }
+
+        fn mismatch<E: de::Error>(declared: usize, actual: usize) -> E {
+            E::custom(count_mismatch(declared, actual))
+        }
+
+        deserializer.deserialize_seq(CountedVisitor(PhantomData))
     }
 }
 

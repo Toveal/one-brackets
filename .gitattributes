@@ -1,1 +1,2 @@
 tests/fixtures/** -text
+examples/**/*.lst -text

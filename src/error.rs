@@ -116,6 +116,8 @@ pub enum AccessErrorKind {
         found: String,
         reason: String,
     },
+    /// A counted list `{count,items...}` whose count does not match its items.
+    CountMismatch { declared: usize, actual: usize },
     /// A message from serde: missing items, unknown variants and the like.
     Message(String),
 }
@@ -176,6 +178,9 @@ impl fmt::Display for AccessError {
             AccessErrorKind::IndexOutOfBounds { index, len } => {
                 write!(f, "index {index} is out of bounds for list of length {len}")?
             }
+            AccessErrorKind::CountMismatch { declared, actual } => {
+                f.write_str(&count_mismatch(*declared, *actual))?
+            }
             AccessErrorKind::Message(message) => f.write_str(message)?,
         }
         if let Some(position) = inner.position {
@@ -192,6 +197,12 @@ impl fmt::Display for AccessError {
 }
 
 impl std::error::Error for AccessError {}
+
+/// Shared by `Node::try_counted` and `Counted`, which can only report through serde.
+pub(crate) fn count_mismatch(declared: usize, actual: usize) -> String {
+    let items = if declared == 1 { "item" } else { "items" };
+    format!("list declares {declared} {items}, but has {actual}")
+}
 
 #[cfg(feature = "serde")]
 impl serde::de::Error for AccessError {

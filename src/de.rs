@@ -1,7 +1,7 @@
 //! Deserialization of a [`Node`] tree into user types.
 //!
 //! Mapping:
-//! - struct, tuple → list, field by position; extra items are ignored (see [`Tail`](crate::Tail));
+//! - struct, tuple → list, field by position; extra items are ignored (see [`Rest`](crate::Rest));
 //! - `Vec<T>` → list; map → list of `{key,value}` pairs;
 //! - numbers, `bool` (`0`/`1`) → atoms; `String` → string or atom;
 //! - `Option<T>` → `None` for an empty atom;
@@ -15,7 +15,7 @@ use std::io::Read;
 use serde::de::{self, DeserializeOwned, DeserializeSeed, IntoDeserializer, Visitor};
 use serde::{Deserialize, forward_to_deserialize_any};
 
-use crate::serde_impls::{NODE, TAIL, VALUE};
+use crate::serde_impls::{NODE, REST, VALUE};
 use crate::{AccessError, Node, Value};
 
 /// Deserializes a user type from a node; `&str` fields can borrow from the node.
@@ -276,7 +276,7 @@ struct Seq<'de> {
     end: usize,
     /// Index of `items[0]` in the parent list, for error paths.
     offset: usize,
-    /// Item taken by the current element; `None` when a [`Tail`](crate::Tail) took the rest.
+    /// Item taken by the current element; `None` when a [`Rest`](crate::Rest) took the rest.
     taken: Option<usize>,
 }
 
@@ -328,7 +328,7 @@ impl<'de> de::SeqAccess<'de> for Seq<'de> {
     }
 }
 
-/// The next list item; takes it only when its type is known, so a `Tail` can take the rest.
+/// The next list item; takes it only when its type is known, so a `Rest` can take the rest.
 struct Element<'a, 'de> {
     seq: &'a mut Seq<'de>,
 }
@@ -394,21 +394,21 @@ impl<'de> de::Deserializer<'de> for Element<'_, 'de> {
         name: &'static str,
         visitor: V,
     ) -> Result<V::Value, AccessError> {
-        if name != TAIL {
+        if name != REST {
             return self.take().deserialize_newtype_struct(name, visitor);
         }
         let seq = self.seq;
         let start = seq.next;
         let rest = &seq.items[start..];
         seq.next = seq.items.len();
-        visitor.visit_newtype_struct(TailDeserializer(Seq::new(rest).offset(seq.offset + start)))
+        visitor.visit_newtype_struct(RestDeserializer(Seq::new(rest).offset(seq.offset + start)))
     }
 }
 
 /// The rest of a list, as a sequence.
-struct TailDeserializer<'de>(Seq<'de>);
+struct RestDeserializer<'de>(Seq<'de>);
 
-impl<'de> de::Deserializer<'de> for TailDeserializer<'de> {
+impl<'de> de::Deserializer<'de> for RestDeserializer<'de> {
     type Error = AccessError;
 
     fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, AccessError> {

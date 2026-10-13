@@ -5,7 +5,7 @@
 
 use serde::ser::{self, Serialize};
 
-use crate::serde_impls::{ATOM, TAIL, VALUE};
+use crate::serde_impls::{ATOM, REST, VALUE};
 use crate::{Node, SerializeError, Value};
 
 /// Serializes a user type into a node tree.
@@ -21,7 +21,7 @@ pub fn to_string<T: Serialize + ?Sized>(value: &T) -> Result<String, SerializeEr
     to_node(value).map(String::from)
 }
 
-/// A [`Tail`](crate::Tail) is spliced into the enclosing list instead of nesting.
+/// A [`Rest`](crate::Rest) is spliced into the enclosing list instead of nesting.
 enum Item {
     One(Node),
     Splice(Vec<Node>),
@@ -116,9 +116,9 @@ impl ser::Serializer for NodeSerializer {
         value: &T,
     ) -> Result<Item, SerializeError> {
         match name {
-            TAIL => match to_node(value)?.into_list() {
+            REST => match to_node(value)?.into_list() {
                 Some(items) => Ok(Item::Splice(items)),
-                None => Err(SerializeError::new("a tail must serialize as a sequence")),
+                None => Err(SerializeError::new("a rest must serialize as a sequence")),
             },
             ATOM => match to_node(value)?.into_value() {
                 Value::Str(s) | Value::Atom(s) => one(Node::atom(s)),
