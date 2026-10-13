@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::ops::Index;
+use std::ops::{Index, IndexMut};
 use std::str::FromStr;
 
 use crate::{AccessError, AccessErrorKind, Position};
@@ -71,7 +71,14 @@ impl Node {
         self.value
     }
 
+    /// Mutable access to the content; the position stays where the node was parsed.
+    pub fn value_mut(&mut self) -> &mut Value {
+        &mut self.value
+    }
+
     /// Where the node starts in the input; `None` for nodes built in code.
+    ///
+    /// Edits do not change it: it always refers to the original text.
     pub fn position(&self) -> Option<Position> {
         self.position
     }
@@ -288,6 +295,60 @@ impl Node {
         Ok(node)
     }
 
+    /// List items for editing: replace, push, insert or remove nodes.
+    pub fn as_list_mut(&mut self) -> Option<&mut Vec<Node>> {
+        match &mut self.value {
+            Value::List(items) => Some(items),
+            _ => None,
+        }
+    }
+
+    pub fn get_mut(&mut self, idx: usize) -> Option<&mut Node> {
+        self.as_list_mut()?.get_mut(idx)
+    }
+
+    pub fn get_path_mut(&mut self, path: &[usize]) -> Option<&mut Node> {
+        path.iter().try_fold(self, |node, &idx| node.get_mut(idx))
+    }
+
+    /// List items; an empty iterator for strings and atoms.
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, Node> {
+        match &mut self.value {
+            Value::List(items) => items.iter_mut(),
+            _ => [].iter_mut(),
+        }
+    }
+
+    pub fn try_list_mut(&mut self) -> Result<&mut Vec<Node>, AccessError> {
+        if !self.is_list() {
+            return Err(self.unexpected("list"));
+        }
+        Ok(self.as_list_mut().expect("checked above"))
+    }
+
+    pub fn try_get_mut(&mut self, idx: usize) -> Result<&mut Node, AccessError> {
+        let position = self.position;
+        let items = self.try_list_mut()?;
+        let len = items.len();
+        items.get_mut(idx).ok_or_else(|| {
+            AccessError::new(
+                AccessErrorKind::IndexOutOfBounds { index: idx, len },
+                position,
+            )
+        })
+    }
+
+    /// Item by a path of indices for editing: `*node.try_get_path_mut(&[1, 0])? = Node::from(2)`.
+    pub fn try_get_path_mut(&mut self, path: &[usize]) -> Result<&mut Node, AccessError> {
+        let mut node = self;
+        for (depth, &idx) in path.iter().enumerate() {
+            node = node
+                .try_get_mut(idx)
+                .map_err(|e| e.with_path(&path[..depth]))?;
+        }
+        Ok(node)
+    }
+
     /// Items of a counted list `{count,item1,item2,...}`: `{2,a,b}` gives `[a, b]`.
     ///
     /// Fails if the count is not a number or does not match the number of items.
@@ -407,12 +468,30 @@ impl Index<usize> for Node {
     }
 }
 
+impl IndexMut<usize> for Node {
+    fn index_mut(&mut self, idx: usize) -> &mut Node {
+        match self.try_get_mut(idx) {
+            Ok(node) => node,
+            Err(e) => panic!("cannot index node: {e}"),
+        }
+    }
+}
+
 impl<'a> IntoIterator for &'a Node {
     type Item = &'a Node;
     type IntoIter = std::slice::Iter<'a, Node>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut Node {
+    type Item = &'a mut Node;
+    type IntoIter = std::slice::IterMut<'a, Node>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
     }
 }
 
@@ -552,6 +631,41 @@ mod tests {
         assert_eq!(type_label::<u32>(), "u32");
         assert_eq!(type_label::<Local>(), "Local");
         assert_eq!(type_label::<String>(), "String");
+    }
+
+    #[test]
+    fn edits_in_place() {
+        let mut node: Node = "{1,\r\n{a,\"b\"}}".parse().unwrap();
+        node[0] = Node::from(2);
+        *node.try_get_path_mut(&[1, 1]).unwrap().value_mut() = Value::Str("c".into());
+        node.get_mut(1)
+            .unwrap()
+            .try_list_mut()
+            .unwrap()
+            .push(Node::atom("d"));
+        for item in &mut node[1] {
+            if item.as_atom() == Some("a") {
+                *item = Node::atom("z");
+            }
+        }
+        assert_eq!(node.to_string(), "{2,\r\n{z,\"c\",d}\r\n}");
+        // The edited value keeps the position of the original node.
+        assert_eq!(
+            node.get_path(&[1, 1]).unwrap().position().unwrap().column,
+            4
+        );
+        assert!(node.get_path_mut(&[0, 0]).is_none());
+        assert_eq!(node[0].iter_mut().count(), 0);
+
+        insta::assert_snapshot!(node.try_get_path_mut(&[1, 7]).unwrap_err(), @"index 7 is out of bounds for list of length 3 at line 2, column 1 (path [1])");
+        insta::assert_snapshot!(node[0].try_list_mut().unwrap_err(), @"expected list, found value `2`");
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot index node: index 5 is out of bounds for list of length 2")]
+    fn index_mut_panics_with_message() {
+        let mut node = Node::list([Node::from(1), Node::from(2)]);
+        node[5] = Node::from(3);
     }
 
     #[test]

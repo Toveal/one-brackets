@@ -20,6 +20,12 @@
 //! let node = Node::from_reader(std::io::Cursor::new(b"{1,{}}"))?;
 //! assert_eq!(node, Node::list([Node::from(1), Node::list([])]));
 //!
+//! // Edit in place and write back: untouched parts keep their text.
+//! let mut node: Node = "{1,\"old\",{2}}".parse()?;
+//! *node.try_get_path_mut(&[2, 0])? = Node::from(3);
+//! node[1] = Node::string("new");
+//! assert_eq!(node.to_string(), "{1,\"new\",\r\n{3}\r\n}");
+//!
 //! // Errors carry a position.
 //! let err = Node::try_from("{1,\n{2").unwrap_err();
 //! assert_eq!(

@@ -58,6 +58,21 @@ fn streaming_matches_buffered() {
     });
 }
 
+#[test]
+fn edits_keep_the_rest_byte_for_byte() {
+    let bytes = fs::read("tests/fixtures/copyinfo.txt").unwrap();
+    let source = String::from_utf8(bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap().to_vec()).unwrap();
+    let mut node: Node = source.parse().unwrap();
+
+    let name = node.try_get_path_mut(&[1, 1, 3, 1]).unwrap();
+    assert_eq!(name.as_quoted(), Some("ДемоОбработка"));
+    *name = Node::string("Переименовано");
+
+    let expected = source.replace("\"ДемоОбработка\"", "\"Переименовано\"");
+    assert_ne!(expected, source);
+    assert_eq!(node.to_string(), expected);
+}
+
 /// Example of a user model on top of `Node`.
 #[derive(Debug)]
 struct Root {
