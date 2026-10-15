@@ -1,0 +1,26 @@
+---
+source: cli/tests/cli.rs
+expression: output
+---
+<?xml version="1.0" encoding="UTF-8"?>
+<list>
+  <str>#</str>
+  <atom>3d48feae-a9c6-4c5a-a099-9eb6477630c6</atom>
+  <list>
+    <atom>1</atom>
+    <list>
+      <list><str>S</str><str>ключ</str></list>
+      <list>
+        <str>#</str>
+        <atom>4238019d-7e49-4fc9-91db-b6b951d5cf8e</atom>
+        <list>
+          <atom>1</atom>
+          <list>
+            <list><str>S</str><str>Вложенная</str></list>
+            <list><str>B</str><atom>1</atom></list>
+          </list>
+        </list>
+      </list>
+    </list>
+  </list>
+</list>
