@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `Clone`, `PartialEq`, `Hash`, `Debug` and dropping of `Node` are no longer recursive:
+  a deeply nested tree (e.g. 100 000 levels) no longer overflows the stack. Parsing and
+  writing were already non-recursive. The `Debug` output is unchanged.
+
+### Removed
+
+- `TryFrom<String>`, `TryFrom<Vec<u8>>` and `TryFrom<File>` for `Node`: use `&str`, `&[u8]`
+  and `Node::from_reader` instead.
+- `From<Node>` for `String` and `Vec<u8>`: use `to_string()` or `From<&Node>`.
+
+### Changed
+
+- Parsing is about 10% faster: list items are collected in one reused buffer and moved
+  into a `Vec` of the exact size, and single bytes and separators skip the generic scanning.
+  Parsed trees are also more compact, which makes writing about 15% faster.
+- Documentation states that whitespace between items is not kept on writing and that
+  serde mapping is recursive.
+
 ## [0.1.0] - 2026-10-13
 
 First release.

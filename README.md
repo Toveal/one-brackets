@@ -7,9 +7,13 @@ Reader and writer for the 1C:Enterprise bracket format: `{1,"text",{nested,list}
 The format is used across the 1C platform: configuration files, forms, cluster
 settings (`1cv8wsrv.lst`), event logs (`*.lgp`) and `ValueToStringInternal()` output.
 
-- **Lossless.** Quoted strings and unquoted values are kept apart, so writing reproduces
-  the platform's text byte for byte. Checked against files written by the platform itself.
-- **Any source.** Reads from any `std::io::Read`, streaming; deep nesting needs no recursion.
+- **Lossless values.** Quoted strings and unquoted values are kept apart, so text written
+  by the platform is written back byte for byte. Checked against files written by the platform
+  itself. Whitespace between items is not kept: writing uses the platform layout, so
+  `{ 1 , 2 }` becomes `{1,2}`.
+- **Any source.** Reads from any `std::io::Read`, streaming.
+- **Any depth.** Parsing, writing, cloning, comparison, hashing and dropping need no recursion,
+  so deeply nested input does not overflow the stack. serde mapping is recursive, as serde is.
 - **Clear errors.** Parse and access errors carry the line, column and path to the node.
 - **Editable.** Change nodes in place and write the file back.
 - **serde.** Map lists to your types by field order (`serde` feature).
