@@ -7,9 +7,13 @@ Reader and writer for the 1C:Enterprise bracket format: `{1,"text",{nested,list}
 The format is used across the 1C platform: configuration files, forms, cluster
 settings (`1cv8wsrv.lst`), event logs (`*.lgp`) and `ValueToStringInternal()` output.
 
-- **Lossless.** Quoted strings and unquoted values are kept apart, so writing reproduces
-  the platform's text byte for byte. Checked against files written by the platform itself.
-- **Any source.** Reads from any `std::io::Read`, streaming; deep nesting needs no recursion.
+- **Lossless values.** Quoted strings and unquoted values are kept apart, so text written
+  by the platform is written back byte for byte. Checked against files written by the platform
+  itself. Whitespace between items is not kept: writing uses the platform layout, so
+  `{ 1 , 2 }` becomes `{1,2}`.
+- **Any source.** Reads from any `std::io::Read`, streaming.
+- **Any depth.** Parsing, writing, cloning, comparison, hashing and dropping need no recursion,
+  so deeply nested input does not overflow the stack. serde mapping is recursive, as serde is.
 - **Clear errors.** Parse and access errors carry the line, column and path to the node.
 - **Editable.** Change nodes in place and write the file back.
 - **serde.** Map lists to your types by field order (`serde` feature).
@@ -18,7 +22,7 @@ settings (`1cv8wsrv.lst`), event logs (`*.lgp`) and `ValueToStringInternal()` ou
 
 ```toml
 [dependencies]
-one-brackets = "0.1"
+one-brackets = "0.2"
 ```
 
 Parse, read and edit:
@@ -112,6 +116,17 @@ fn main() -> Result<(), one_brackets::ParseError> {
 
 ```sh
 cargo run --example v8log --features serde -- path/to/20260908000000.lgp
+```
+
+## Command-line tool
+
+[`one-brackets-cli`](cli/README.md) converts bracket files to JSON, YAML and XML and back
+without losses, checks them and prints nodes by path:
+
+```sh
+cargo install one-brackets-cli
+one-brackets export Form.txt -o Form.yaml
+one-brackets import Form.yaml -o Form.txt
 ```
 
 ## Performance

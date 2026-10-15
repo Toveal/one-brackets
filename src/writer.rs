@@ -34,20 +34,8 @@ impl From<&Node> for String {
     }
 }
 
-impl From<Node> for String {
-    fn from(node: Node) -> Self {
-        node.to_string()
-    }
-}
-
 impl From<&Node> for Vec<u8> {
     fn from(node: &Node) -> Self {
-        node.to_string().into_bytes()
-    }
-}
-
-impl From<Node> for Vec<u8> {
-    fn from(node: Node) -> Self {
         node.to_string().into_bytes()
     }
 }
@@ -133,7 +121,7 @@ mod tests {
     #[test]
     fn keeps_base64_with_line_breaks() {
         let text = "{1,\r\n{#base64:QUJD\r\r\nREVG\r\r\n},2}";
-        assert_eq!(String::from(Node::try_from(text).unwrap()), text);
+        assert_eq!(Node::try_from(text).unwrap().to_string(), text);
     }
 
     #[test]
@@ -148,7 +136,7 @@ mod tests {
         let mut bytes = Vec::new();
         node.write_to(&mut bytes).unwrap();
         assert_eq!(bytes, Vec::<u8>::from(&node));
-        assert_eq!(Node::try_from(bytes).unwrap(), node);
+        assert_eq!(Node::try_from(bytes.as_slice()).unwrap(), node);
     }
 
     #[test]

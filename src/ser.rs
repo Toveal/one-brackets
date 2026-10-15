@@ -18,7 +18,7 @@ pub fn to_node<T: Serialize + ?Sized>(value: &T) -> Result<Node, SerializeError>
 
 /// Serializes a user type into bracket text in the platform layout.
 pub fn to_string<T: Serialize + ?Sized>(value: &T) -> Result<String, SerializeError> {
-    to_node(value).map(String::from)
+    to_node(value).map(|node| node.to_string())
 }
 
 /// A [`Rest`](crate::Rest) is spliced into the enclosing list instead of nesting.

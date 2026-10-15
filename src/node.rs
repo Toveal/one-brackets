@@ -12,16 +12,19 @@ const BASE64: &str = "#base64:";
 
 /// A node of a bracket file: a [`Value`] plus the position it was parsed from.
 ///
-/// Quoted strings and atoms are kept distinct, so writing reproduces
-/// the original platform text byte for byte. Equality and hashing ignore the position.
-#[derive(Clone)]
+/// Quoted strings and atoms are kept distinct, so text written by the platform is written back
+/// byte for byte. Whitespace between items is not kept: writing uses the platform layout.
+/// Equality and hashing ignore the position.
+///
+/// Like parsing and writing, cloning, comparison, hashing, `Debug` and dropping
+/// are not recursive: a tree of any depth does not overflow the stack.
 pub struct Node {
     value: Value,
     position: Option<Position>,
 }
 
 /// Content of a [`Node`].
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum Value {
     /// A list `{a,b,c}`.
     List(Vec<Node>),
@@ -67,8 +70,8 @@ impl Node {
         &self.value
     }
 
-    pub fn into_value(self) -> Value {
-        self.value
+    pub fn into_value(mut self) -> Value {
+        self.take_value()
     }
 
     /// Mutable access to the content; the position stays where the node was parsed.
@@ -193,16 +196,16 @@ impl Node {
         self.as_list().unwrap_or(&[]).iter()
     }
 
-    pub fn into_list(self) -> Option<Vec<Node>> {
-        match self.value {
+    pub fn into_list(mut self) -> Option<Vec<Node>> {
+        match self.take_value() {
             Value::List(items) => Some(items),
             _ => None,
         }
     }
 
     /// Value of a string or an atom.
-    pub fn into_string(self) -> Option<String> {
-        match self.value {
+    pub fn into_string(mut self) -> Option<String> {
+        match self.take_value() {
             Value::Str(s) | Value::Atom(s) => Some(s),
             Value::List(_) => None,
         }
@@ -406,6 +409,11 @@ impl Node {
         }
     }
 
+    /// Moves the value out: fields of a `Drop` type cannot be moved directly.
+    fn take_value(&mut self) -> Value {
+        std::mem::replace(&mut self.value, Value::Atom(String::new()))
+    }
+
     pub(crate) fn unexpected(&self, expected: impl Into<Cow<'static, str>>) -> AccessError {
         AccessError::new(
             AccessErrorKind::UnexpectedType {
@@ -443,17 +451,181 @@ impl fmt::Debug for Node {
     }
 }
 
+impl fmt::Debug for Value {
+    /// The same text as a derived `Debug`, `{:#?}` included, but not recursive.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fn indent(f: &mut fmt::Formatter<'_>, depth: usize) -> fmt::Result {
+            (0..depth).try_for_each(|_| f.write_str("    "))
+        }
+
+        let pretty = f.alternate();
+        // (items left, indentation depth of the list's `List(`)
+        let mut stack: Vec<(std::slice::Iter<'_, Node>, usize)> = Vec::new();
+        let mut next = Some((self, 0));
+        loop {
+            if let Some((value, depth)) = next.take() {
+                let (name, text) = match value {
+                    Value::List(items) if !items.is_empty() => {
+                        if pretty {
+                            f.write_str("List(\n")?;
+                            indent(f, depth + 1)?;
+                            f.write_str("[\n")?;
+                            indent(f, depth + 2)?;
+                        } else {
+                            f.write_str("List([")?;
+                        }
+                        let mut items = items.iter();
+                        next = items.next().map(|item| (&item.value, depth + 2));
+                        stack.push((items, depth));
+                        continue;
+                    }
+                    Value::List(_) => ("List", None),
+                    Value::Str(s) => ("Str", Some(s)),
+                    Value::Atom(s) => ("Atom", Some(s)),
+                };
+                f.write_str(name)?;
+                f.write_str("(")?;
+                if pretty {
+                    f.write_str("\n")?;
+                    indent(f, depth + 1)?;
+                }
+                match text {
+                    Some(s) => write!(f, "{s:?}")?,
+                    None => f.write_str("[]")?,
+                }
+                if pretty {
+                    f.write_str(",\n")?;
+                    indent(f, depth)?;
+                }
+                f.write_str(")")?;
+            } else {
+                // The innermost open list has no items left.
+                let Some((_, depth)) = stack.pop() else {
+                    return Ok(());
+                };
+                if pretty {
+                    indent(f, depth + 1)?;
+                    f.write_str("],\n")?;
+                    indent(f, depth)?;
+                    f.write_str(")")?;
+                } else {
+                    f.write_str("])")?;
+                }
+            }
+            // A value is written: separate it from the next item of its list.
+            let Some((items, depth)) = stack.last_mut() else {
+                return Ok(());
+            };
+            if pretty {
+                f.write_str(",\n")?;
+            }
+            if let Some(item) = items.next() {
+                if pretty {
+                    indent(f, *depth + 2)?;
+                } else {
+                    f.write_str(", ")?;
+                }
+                next = Some((&item.value, *depth + 2));
+            }
+        }
+    }
+}
+
+impl Clone for Node {
+    /// Not recursive: a deep tree does not overflow the stack.
+    fn clone(&self) -> Self {
+        let Value::List(items) = &self.value else {
+            return Self {
+                value: self.value.clone(),
+                position: self.position,
+            };
+        };
+        // (source items left, copied items, position of the list)
+        let mut stack = vec![(items.iter(), Vec::with_capacity(items.len()), self.position)];
+        loop {
+            let (source, copied, _) = stack.last_mut().expect("clone stack is not empty");
+            match source.next() {
+                Some(item) => match &item.value {
+                    Value::List(items) => {
+                        stack.push((items.iter(), Vec::with_capacity(items.len()), item.position));
+                    }
+                    scalar => copied.push(Self {
+                        value: scalar.clone(),
+                        position: item.position,
+                    }),
+                },
+                None => {
+                    let (_, items, position) = stack.pop().expect("clone stack is not empty");
+                    let done = Self {
+                        value: Value::List(items),
+                        position,
+                    };
+                    match stack.last_mut() {
+                        Some((_, parent, _)) => parent.push(done),
+                        None => return done,
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Drop for Node {
+    /// Not recursive: nested lists are moved onto a heap stack and dropped one by one.
+    fn drop(&mut self) {
+        let Value::List(items) = &mut self.value else {
+            return;
+        };
+        // Items without nested items of their own drop without recursion anyway.
+        if items.iter().all(Node::is_empty) {
+            return;
+        }
+        let mut stack = std::mem::take(items);
+        while let Some(mut node) = stack.pop() {
+            if let Value::List(items) = &mut node.value {
+                stack.append(items);
+            }
+        }
+    }
+}
+
 impl PartialEq for Node {
+    /// Ignores positions. Not recursive.
     fn eq(&self, other: &Self) -> bool {
-        self.value == other.value
+        let mut stack = vec![(std::slice::from_ref(self), std::slice::from_ref(other))];
+        while let Some((left, right)) = stack.pop() {
+            if left.len() != right.len() {
+                return false;
+            }
+            for (left, right) in left.iter().zip(right) {
+                match (&left.value, &right.value) {
+                    (Value::List(left), Value::List(right)) => stack.push((left, right)),
+                    // Scalars, or a list against a scalar: compared without recursion.
+                    (left, right) if left != right => return false,
+                    _ => {}
+                }
+            }
+        }
+        true
     }
 }
 
 impl Eq for Node {}
 
 impl Hash for Node {
+    /// Ignores positions. Not recursive: pre-order with list lengths.
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.value.hash(state);
+        let mut stack = vec![self];
+        while let Some(node) = stack.pop() {
+            std::mem::discriminant(&node.value).hash(state);
+            match &node.value {
+                Value::List(items) => {
+                    items.len().hash(state);
+                    stack.extend(items.iter().rev());
+                }
+                Value::Str(s) | Value::Atom(s) => s.hash(state),
+            }
+        }
     }
 }
 
@@ -682,6 +854,65 @@ mod tests {
         insta::assert_snapshot!(bad[0].try_counted().unwrap_err(), @"expected usize, found value `x` at line 2, column 2 (path [0]): invalid digit found in string");
         insta::assert_snapshot!(bad[1].try_counted().unwrap_err(), @"list declares 3 items, but has 1 at line 3, column 1");
         insta::assert_snapshot!(bad[2].try_counted().unwrap_err(), @"index 0 is out of bounds for list of length 0 at line 4, column 1");
+    }
+
+    #[test]
+    fn debug_matches_derived_layout() {
+        let node = Node::list([
+            Node::atom("1"),
+            Node::list([]),
+            Node::list([Node::string("a \"b\"")]),
+        ]);
+        assert_eq!(
+            format!("{node:?}"),
+            r#"List([Atom("1"), List([]), List([Str("a \"b\"")])])"#
+        );
+        insta::assert_snapshot!(format!("{node:#?}"), @r#"
+        List(
+            [
+                Atom(
+                    "1",
+                ),
+                List(
+                    [],
+                ),
+                List(
+                    [
+                        Str(
+                            "a \"b\"",
+                        ),
+                    ],
+                ),
+            ],
+        )
+        "#);
+    }
+
+    #[test]
+    fn deep_trees_without_recursion() {
+        let depth = 100_000;
+        let deep = || {
+            (0..depth).fold(Node::string("leaf"), |inner, _| {
+                Node::list([Node::from(1), inner])
+            })
+        };
+        let node = deep();
+        let copy = node.clone();
+        assert_eq!(copy, node);
+        assert_ne!(copy, Node::list([]));
+
+        let hash = |node: &Node| {
+            let mut hasher = std::hash::DefaultHasher::new();
+            node.hash(&mut hasher);
+            hasher.finish()
+        };
+        assert_eq!(hash(&copy), hash(&deep()));
+
+        let debug = format!("{node:?}");
+        assert!(debug.starts_with("List([Atom(\"1\"), List(["));
+
+        assert_eq!(node.into_list().map(|items| items.len()), Some(2));
+        drop(copy);
     }
 
     #[test]
