@@ -24,7 +24,7 @@ one-brackets get Form.txt 1.0.2                  # node by item indices; --raw, 
 `-` reads standard input or writes standard output. Errors carry the line and column:
 
 ```text
-error: failed to read `Form.json`: atom "a b" at line 12, column 7 contains whitespace: use a quoted string instead
+error: failed to read `Form.json`: atom " a" at line 12, column 7 starts with whitespace: use a quoted string instead
 ```
 
 Event logs (`*.lgp`) are read one record at a time and written as JSON Lines, YAML documents
@@ -59,8 +59,10 @@ The bracket format has three kinds of values: lists, quoted strings and unquoted
 Lists of scalars are written on one line, other lists one item per line; `--compact` writes
 everything on one line.
 
-On import, an atom that the bracket parser would read differently (with `,`, `{`, `}`, whitespace
-or a leading quote) is an error.
+On import, an atom that the bracket parser would read differently (with `,` or `}`, or starting
+with `{`, a quote or whitespace) is an error. Unpaired surrogates, which the platform allows in
+strings, are kept in JSON as `\uXXXX` escapes; YAML and XML cannot hold them, and export to them
+fails.
 
 ## Depth
 

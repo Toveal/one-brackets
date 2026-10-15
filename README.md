@@ -10,7 +10,11 @@ settings (`1cv8wsrv.lst`), event logs (`*.lgp`) and `ValueToStringInternal()` ou
 - **Lossless values.** Quoted strings and unquoted values are kept apart, so text written
   by the platform is written back byte for byte. Checked against files written by the platform
   itself. Whitespace between items is not kept: writing uses the platform layout, so
-  `{ 1 , 2 }` becomes `{1,2}`.
+  `{ "a" , "b" }` becomes `{"a","b"}`.
+- **Read as the platform reads.** Rules follow the platform's own reader: an unquoted value runs
+  up to the next `,` or `}`, trailing whitespace included; whitespace is Unicode whitespace;
+  characters outside the BMP and unpaired surrogates in strings are escaped as `"\d83d`.
+  Input is UTF-8, with or without a BOM; invalid UTF-8 is an error.
 - **Any source.** Reads from any `std::io::Read`, streaming.
 - **Any depth.** Parsing, writing, cloning, comparison, hashing and dropping need no recursion,
   so deeply nested input does not overflow the stack. serde mapping is recursive, as serde is.
