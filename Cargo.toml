@@ -11,6 +11,9 @@ keywords = ["1c-enterprise", "brackets", "parser", "serde", "event-log"]
 categories = ["parser-implementations", "encoding"]
 exclude = [".github"]
 
+[workspace]
+members = ["cli"]
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
