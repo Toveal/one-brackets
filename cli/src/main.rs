@@ -2,6 +2,7 @@
 
 mod json;
 mod tree;
+mod xml;
 mod yaml;
 
 fn main() {}
