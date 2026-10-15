@@ -17,7 +17,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 clap = { version = "4.5", features = ["derive"] }
-one-brackets = { version = "0.1", path = ".." }
+one-brackets = { version = "0.2", path = ".." }
 quick-xml = "0.41"
 saphyr-parser = "0.2"
 

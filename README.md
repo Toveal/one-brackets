@@ -22,7 +22,7 @@ settings (`1cv8wsrv.lst`), event logs (`*.lgp`) and `ValueToStringInternal()` ou
 
 ```toml
 [dependencies]
-one-brackets = "0.1"
+one-brackets = "0.2"
 ```
 
 Parse, read and edit:
