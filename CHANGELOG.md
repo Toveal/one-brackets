@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-17
+
 Reading follows the reader of the platform (8.3.27) to the byte.
 
 ### Changed
@@ -95,6 +97,7 @@ First release.
   dictionary.
 - Benchmarks and performance notes on allocators for Windows and Linux.
 
-[Unreleased]: https://github.com/Toveal/one-brackets/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Toveal/one-brackets/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Toveal/one-brackets/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Toveal/one-brackets/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Toveal/one-brackets/releases/tag/v0.1.0

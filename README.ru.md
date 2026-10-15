@@ -27,7 +27,7 @@
 
 ```toml
 [dependencies]
-one-brackets = "0.2"
+one-brackets = "0.3"
 ```
 
 Разбор, чтение и правка:

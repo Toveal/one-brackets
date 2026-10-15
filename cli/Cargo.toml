@@ -1,6 +1,6 @@
 [package]
 name = "one-brackets-cli"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Command-line converter of 1C:Enterprise bracket files to JSON, YAML and XML and back"
@@ -17,7 +17,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 clap = { version = "4.5", features = ["derive"] }
-one-brackets = { version = "0.2", path = ".." }
+one-brackets = { version = "0.3", path = ".." }
 quick-xml = "0.41"
 saphyr-parser = "0.2"
 
