@@ -29,9 +29,9 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo clippy --all-targets --features serde -- -D warnings
-      - run: cargo test
+      - run: cargo test --workspace
       - run: cargo test --features serde
       - run: cargo run --example cluster --features serde
       - run: cargo run --example v8log --features serde
@@ -44,7 +44,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - run: cargo fmt --check
+      - run: cargo fmt --all --check
 
   msrv:
     name: MSRV 1.85
