@@ -98,7 +98,7 @@ impl<'de> de::Deserializer<'de> for NodeDeserializer<'de> {
         let result = match self.node.value() {
             Value::List(items) => visitor.visit_seq(Seq::new(items)),
             Value::Atom(s) if s.is_empty() => visitor.visit_unit(),
-            Value::Str(s) | Value::Atom(s) => visitor.visit_borrowed_str(s),
+            Value::Str(_) | Value::Atom(_) => visitor.visit_borrowed_str(self.node.try_str()?),
         };
         self.locate(result)
     }

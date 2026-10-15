@@ -6,7 +6,7 @@ use std::hash::{Hash, Hasher};
 use std::ops::{Index, IndexMut};
 use std::str::FromStr;
 
-use crate::{AccessError, AccessErrorKind, Position};
+use crate::{AccessError, AccessErrorKind, Position, Text};
 
 const BASE64: &str = "#base64:";
 
@@ -14,6 +14,7 @@ const BASE64: &str = "#base64:";
 ///
 /// Quoted strings and atoms are kept distinct, so text written by the platform is written back
 /// byte for byte. Whitespace between items is not kept: writing uses the platform layout.
+/// Whitespace inside an atom, trailing whitespace included, is part of its text.
 /// Equality and hashing ignore the position.
 ///
 /// Like parsing and writing, cloning, comparison, hashing, `Debug` and dropping
@@ -28,11 +29,13 @@ pub struct Node {
 pub enum Value {
     /// A list `{a,b,c}`.
     List(Vec<Node>),
-    /// A quoted string; doubled quotes are already unescaped.
-    Str(String),
+    /// A quoted string; doubled quotes and surrogate escapes `"\d83d` are already unescaped.
+    Str(Text),
     /// An unquoted value: number, GUID, literal; may be empty (`{2,x,}`).
+    ///
+    /// It runs up to the next `,` or `}`: whitespace and line breaks before them are part of it.
     /// Binary data `{#base64:…}` is an atom too, line breaks included.
-    Atom(String),
+    Atom(Text),
 }
 
 impl Node {
@@ -49,14 +52,14 @@ impl Node {
     }
 
     /// An unquoted atom (GUID, literal, number).
-    pub fn atom(value: impl Into<String>) -> Self {
+    pub fn atom(value: impl Into<Text>) -> Self {
         Value::Atom(value.into()).into()
     }
 
     /// A quoted string.
     ///
     /// There is no `From<&str>` for building: `Node::try_from(&str)` parses text.
-    pub fn string(value: impl Into<String>) -> Self {
+    pub fn string(value: impl Into<Text>) -> Self {
         Value::Str(value.into()).into()
     }
 
@@ -110,33 +113,50 @@ impl Node {
         }
     }
 
-    /// Value of a string or an atom.
-    pub fn as_str(&self) -> Option<&str> {
+    /// Text of a string or an atom, unpaired surrogates included.
+    pub fn as_text(&self) -> Option<&Text> {
         match &self.value {
             Value::Str(s) | Value::Atom(s) => Some(s),
             Value::List(_) => None,
         }
     }
 
+    /// Value of a string or an atom; `None` if it holds an unpaired surrogate.
+    pub fn as_str(&self) -> Option<&str> {
+        self.as_text()?.as_str()
+    }
+
+    /// Value of a string or an atom with unpaired surrogates replaced by U+FFFD.
+    pub fn to_string_lossy(&self) -> Option<Cow<'_, str>> {
+        Some(self.as_text()?.to_string_lossy())
+    }
+
     /// Quoted string only.
     pub fn as_quoted(&self) -> Option<&str> {
         match &self.value {
-            Value::Str(s) => Some(s),
+            Value::Str(s) => s.as_str(),
             _ => None,
         }
     }
 
-    /// Atom only.
+    /// Atom only, as written: trailing whitespace included.
     pub fn as_atom(&self) -> Option<&str> {
         match &self.value {
-            Value::Atom(s) => Some(s),
+            Value::Atom(s) => s.as_str(),
             _ => None,
         }
+    }
+
+    /// Atom without leading and trailing whitespace: `{12\r\n}` gives `12`.
+    ///
+    /// The typed accessors (`as_i64`, `try_parse` and the like) read this text.
+    pub fn as_atom_trimmed(&self) -> Option<&str> {
+        self.as_atom().map(trim)
     }
 
     /// Atom parsed into any [`FromStr`] type: `node.as_parsed::<u32>()`.
     pub fn as_parsed<T: FromStr>(&self) -> Option<T> {
-        self.as_atom()?.parse().ok()
+        self.as_atom_trimmed()?.parse().ok()
     }
 
     pub fn as_i64(&self) -> Option<i64> {
@@ -153,7 +173,7 @@ impl Node {
 
     /// Atom `1` is `true`, `0` is `false`.
     pub fn as_bool(&self) -> Option<bool> {
-        match self.as_atom()? {
+        match self.as_atom_trimmed()? {
             "1" => Some(true),
             "0" => Some(false),
             _ => None,
@@ -162,7 +182,7 @@ impl Node {
 
     /// An atom shaped like a GUID `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`.
     pub fn as_guid(&self) -> Option<&str> {
-        self.as_atom().filter(|s| is_guid(s))
+        self.as_atom_trimmed().filter(|s| is_guid(s))
     }
 
     /// Payload of a `#base64:…` atom without the prefix and line breaks (not decoded).
@@ -203,30 +223,61 @@ impl Node {
         }
     }
 
-    /// Value of a string or an atom.
-    pub fn into_string(mut self) -> Option<String> {
+    /// Text of a string or an atom.
+    pub fn into_text(mut self) -> Option<Text> {
         match self.take_value() {
             Value::Str(s) | Value::Atom(s) => Some(s),
             Value::List(_) => None,
         }
     }
 
+    /// Value of a string or an atom; unpaired surrogates are replaced by U+FFFD.
+    pub fn into_string(self) -> Option<String> {
+        self.into_text()
+            .map(|text| text.into_string().unwrap_or_else(|text| text.to_string()))
+    }
+
     pub fn try_list(&self) -> Result<&[Node], AccessError> {
         self.as_list().ok_or_else(|| self.unexpected("list"))
     }
 
-    pub fn try_str(&self) -> Result<&str, AccessError> {
-        self.as_str()
+    pub fn try_text(&self) -> Result<&Text, AccessError> {
+        self.as_text()
             .ok_or_else(|| self.unexpected("string or value"))
     }
 
-    pub fn try_quoted(&self) -> Result<&str, AccessError> {
-        self.as_quoted()
-            .ok_or_else(|| self.unexpected("quoted string"))
+    /// Fails for a list and for text with an unpaired surrogate.
+    pub fn try_str(&self) -> Result<&str, AccessError> {
+        self.unicode(self.try_text()?, "string or value")
     }
 
+    pub fn try_quoted(&self) -> Result<&str, AccessError> {
+        match &self.value {
+            Value::Str(s) => self.unicode(s, "quoted string"),
+            _ => Err(self.unexpected("quoted string")),
+        }
+    }
+
+    /// Atom as written: trailing whitespace included.
     pub fn try_atom(&self) -> Result<&str, AccessError> {
-        self.as_atom().ok_or_else(|| self.unexpected("value"))
+        match &self.value {
+            Value::Atom(s) => self.unicode(s, "value"),
+            _ => Err(self.unexpected("value")),
+        }
+    }
+
+    /// The text as `&str`, or an error about the unpaired surrogate in it.
+    fn unicode<'a>(&self, text: &'a Text, expected: &'static str) -> Result<&'a str, AccessError> {
+        text.as_str().ok_or_else(|| {
+            AccessError::new(
+                AccessErrorKind::InvalidValue {
+                    expected: expected.into(),
+                    found: self.describe(),
+                    reason: "it holds an unpaired surrogate".to_owned(),
+                },
+                self.position,
+            )
+        })
     }
 
     /// Atom parsed into any [`FromStr`] type: `node.try_parse::<u32>()?`.
@@ -239,7 +290,7 @@ impl Node {
     {
         let expected = type_label::<T>();
         let atom = self
-            .as_atom()
+            .as_atom_trimmed()
             .ok_or_else(|| self.unexpected(expected.clone()))?;
         atom.parse().map_err(|e: T::Err| {
             AccessError::new(
@@ -393,9 +444,12 @@ impl Node {
     /// Short description of the node for error messages.
     pub fn describe(&self) -> String {
         const MAX: usize = 40;
-        let clip = |s: &str| match s.char_indices().nth(MAX) {
-            Some((end, _)) => format!("{}…", &s[..end]),
-            None => s.to_owned(),
+        let clip = |text: &Text| {
+            let s = text.to_string_lossy();
+            match s.char_indices().nth(MAX) {
+                Some((end, _)) => format!("{}…", &s[..end]),
+                None => s.into_owned(),
+            }
         };
         match &self.value {
             Value::List(items) => match items.len() {
@@ -411,7 +465,7 @@ impl Node {
 
     /// Moves the value out: fields of a `Drop` type cannot be moved directly.
     fn take_value(&mut self) -> Value {
-        std::mem::replace(&mut self.value, Value::Atom(String::new()))
+        std::mem::replace(&mut self.value, Value::Atom(Text::new()))
     }
 
     pub(crate) fn unexpected(&self, expected: impl Into<Cow<'static, str>>) -> AccessError {
@@ -433,6 +487,33 @@ pub(crate) fn type_label<T>() -> Cow<'static, str> {
     } else {
         Cow::Borrowed(name.rsplit("::").next().unwrap_or(name))
     }
+}
+
+/// Trims whitespace as the platform skips it (see [`is_space`]).
+fn trim(s: &str) -> &str {
+    s.trim_matches(is_space)
+}
+
+/// Whitespace of the platform: ICU `u_isspace` as of Unicode 6.0 (ICU 4.6).
+///
+/// Categories Zs, Zl and Zp, `\t`..`\r`, `\x1c`..`\x1f` and U+0085: unlike
+/// [`char::is_whitespace`], also U+00A0, U+2007, U+202F and U+180E.
+pub(crate) fn is_space(c: char) -> bool {
+    matches!(
+        c,
+        '\t'..='\r'
+            | '\x1c'..='\x20'
+            | '\u{85}'
+            | '\u{a0}'
+            | '\u{1680}'
+            | '\u{180e}'
+            | '\u{2000}'..='\u{200a}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{202f}'
+            | '\u{205f}'
+            | '\u{3000}'
+    )
 }
 
 fn is_guid(s: &str) -> bool {
@@ -913,6 +994,28 @@ mod tests {
 
         assert_eq!(node.into_list().map(|items| items.len()), Some(2));
         drop(copy);
+    }
+
+    #[test]
+    fn typed_accessors_trim_atoms() {
+        let node: Node = "{12\u{a0}\r\n,1 ,c2f34349-b1e0-4060-8abf-3c59f38ac69f\r\n}"
+            .parse()
+            .unwrap();
+        assert_eq!(node[0].as_atom(), Some("12\u{a0}\r\n"));
+        assert_eq!(node[0].as_atom_trimmed(), Some("12"));
+        assert_eq!(node[0].try_parse::<u8>(), Ok(12));
+        assert_eq!(node[1].as_bool(), Some(true));
+        assert!(node[2].as_guid().is_some());
+    }
+
+    #[test]
+    fn unpaired_surrogates() {
+        let node = Node::string(Text::from_utf16(&[0x61, 0xD800]));
+        assert_eq!(node.as_str(), None);
+        assert_eq!(node.to_string_lossy().as_deref(), Some("a\u{fffd}"));
+        insta::assert_snapshot!(node.try_str().unwrap_err(), @r#"expected string or value, found string "a�": it holds an unpaired surrogate"#);
+        assert_eq!(node.clone().into_string().as_deref(), Some("a\u{fffd}"));
+        assert_eq!(node.into_text(), Some(Text::from_utf16(&[0x61, 0xD800])));
     }
 
     #[test]

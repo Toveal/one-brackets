@@ -67,6 +67,9 @@ pub enum ParseError {
 
     #[error("invalid UTF-8 in {context} starting at {at}")]
     InvalidUtf8 { context: &'static str, at: Position },
+
+    #[error("invalid escape at {at}: expected four hex digits after `\"\\`")]
+    InvalidEscape { at: Position },
 }
 
 impl ParseError {
@@ -77,7 +80,8 @@ impl ParseError {
             | ParseError::UnexpectedChar { at, .. }
             | ParseError::UnmatchedClose { at }
             | ParseError::TrailingData { at }
-            | ParseError::InvalidUtf8 { at, .. } => Some(*at),
+            | ParseError::InvalidUtf8 { at, .. }
+            | ParseError::InvalidEscape { at } => Some(*at),
             ParseError::UnclosedString { start } => Some(*start),
             _ => None,
         }

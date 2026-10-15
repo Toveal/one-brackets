@@ -1,12 +1,13 @@
 //! JSON: a list is an array, a quoted string is a string, an atom is a number when its text is
 //! a JSON number, `null` when empty and `{"atom": "..."}` otherwise. The text of numbers is kept
 //! as is, so the mapping is lossless. In the plain mapping atoms other than numbers and empty
-//! ones are strings: easier to read, but it cannot be imported back.
+//! ones are strings: easier to read, but it cannot be imported back. Unpaired surrogates are
+//! written as `\uXXXX` escapes and read back.
 
 use std::io::{self, Write};
 
 use anyhow::{Result, anyhow, bail};
-use one_brackets::{Node, Value};
+use one_brackets::{Node, Text, Value};
 
 use crate::tree::{self, Location, Syntax};
 
@@ -40,7 +41,7 @@ impl Syntax for Json {
         match node.value() {
             Value::Str(s) => write_string(s, out),
             Value::Atom(s) if s.is_empty() => out.write_all(b"null"),
-            Value::Atom(s) if is_number(s) => out.write_all(s.as_bytes()),
+            Value::Atom(s) if s.as_str().is_some_and(is_number) => out.write_all(s.as_wtf8()),
             Value::Atom(s) if self.plain => write_string(s, out),
             Value::Atom(s) => {
                 let key: &[u8] = if self.compact {
@@ -92,8 +93,23 @@ fn is_number(s: &str) -> bool {
     s.is_empty()
 }
 
-fn write_string(s: &str, out: &mut dyn Write) -> io::Result<()> {
+fn write_string(text: &Text, out: &mut dyn Write) -> io::Result<()> {
     out.write_all(b"\"")?;
+    match text.as_str() {
+        Some(s) => write_escaped(s, out)?,
+        None => {
+            for c in text.code_points() {
+                match char::from_u32(c) {
+                    Some(c) => write_escaped(c.encode_utf8(&mut [0; 4]), out)?,
+                    None => write!(out, "\\u{c:04x}")?,
+                }
+            }
+        }
+    }
+    out.write_all(b"\"")
+}
+
+fn write_escaped(s: &str, out: &mut dyn Write) -> io::Result<()> {
     let mut rest = s;
     while let Some(i) = rest.find(|c: char| c < ' ' || c == '"' || c == '\\') {
         out.write_all(&rest.as_bytes()[..i])?;
@@ -108,8 +124,7 @@ fn write_string(s: &str, out: &mut dyn Write) -> io::Result<()> {
         }
         rest = &rest[i + 1..];
     }
-    out.write_all(rest.as_bytes())?;
-    out.write_all(b"\"")
+    out.write_all(rest.as_bytes())
 }
 
 /// Reads one value written in the lossless mapping. Not recursive.
@@ -246,27 +261,28 @@ impl Reader<'_> {
             text: self.text,
             offset: start,
         };
-        match key.as_str() {
+        match key.as_str().unwrap_or_default() {
             "atom" => tree::atom(value, at),
             "str" => Ok(Node::string(value)),
             _ => bail!("unknown key {key:?} at {at}: expected \"atom\" or \"str\""),
         }
     }
 
-    fn string(&mut self) -> Result<String> {
+    /// A string as UTF-16 code units: `\u` escapes may give unpaired surrogates.
+    fn string(&mut self) -> Result<Text> {
         self.pos += 1;
-        let mut value = String::new();
+        let mut value: Vec<u16> = Vec::new();
         loop {
             let rest = &self.text[self.pos..];
             let Some(i) = rest.find(|c: char| c < ' ' || c == '"' || c == '\\') else {
                 return Err(self.error("unclosed string"));
             };
-            value.push_str(&rest[..i]);
+            value.extend(rest[..i].encode_utf16());
             self.pos += i;
             match self.peek() {
                 Some(b'"') => {
                     self.pos += 1;
-                    return Ok(value);
+                    return Ok(Text::from_utf16(&value));
                 }
                 Some(b'\\') => {
                     self.pos += 1;
@@ -281,46 +297,22 @@ impl Reader<'_> {
                         Some(b't') => '\t',
                         Some(b'u') => {
                             self.pos += 1;
-                            let c = self.unicode_escape()?;
-                            value.push(c);
+                            value.push(self.hex4()?);
                             continue;
                         }
                         _ => return Err(self.error("invalid escape")),
                     };
                     self.pos += 1;
-                    value.push(escaped);
+                    value.push(escaped as u16);
                 }
                 _ => return Err(self.error("control character in a string: escape it")),
             }
         }
     }
 
-    /// The part after `\u`, with a surrogate pair if needed.
-    fn unicode_escape(&mut self) -> Result<char> {
-        let start = self.pos - 2;
-        let high = self.hex4()?;
-        let code = if (0xD800..0xDC00).contains(&high) {
-            if !self.text[self.pos..].starts_with("\\u") {
-                return Err(self.error("unpaired surrogate in \\u escape"));
-            }
-            self.pos += 2;
-            let low = self.hex4()?;
-            if !(0xDC00..0xE000).contains(&low) {
-                return Err(self.error("unpaired surrogate in \\u escape"));
-            }
-            0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00)
-        } else {
-            high
-        };
-        char::from_u32(code).ok_or_else(|| {
-            self.pos = start;
-            self.error("unpaired surrogate in \\u escape")
-        })
-    }
-
-    fn hex4(&mut self) -> Result<u32> {
+    fn hex4(&mut self) -> Result<u16> {
         let hex = self.text.get(self.pos..self.pos + 4).unwrap_or("");
-        match u32::from_str_radix(hex, 16) {
+        match u16::from_str_radix(hex, 16) {
             Ok(code) if hex.bytes().all(|b| b.is_ascii_hexdigit()) => {
                 self.pos += 4;
                 Ok(code)
@@ -385,7 +377,7 @@ mod tests {
     #[test]
     fn reads_escapes_and_explicit_kinds() {
         let node = read(r#"[{"str": "1"}, {"atom": "1"}, "\u00e9\ud83d\ude00\/", null]"#).unwrap();
-        assert_eq!(node.to_string(), "{\"1\",1,\"é😀/\",}");
+        assert_eq!(node.to_string(), r#"{"1",1,"é"\d83d"\de00/",}"#);
     }
 
     #[test]
@@ -415,8 +407,8 @@ mod tests {
         );
         assert_eq!(error("[01]"), "invalid number `01` at line 1, column 2");
         assert_eq!(
-            error("[\n{\"atom\": \"a b\"}]"),
-            "atom \"a b\" at line 2, column 1 contains whitespace: use a quoted string instead"
+            error("[\n{\"atom\": \" a\"}]"),
+            "atom \" a\" at line 2, column 1 starts with whitespace: use a quoted string instead"
         );
         assert_eq!(
             error("[{\"x\": \"1\"}]"),
@@ -427,9 +419,20 @@ mod tests {
             error("[] 1"),
             "trailing data after the value at line 1, column 4"
         );
+    }
+
+    #[test]
+    fn keeps_unpaired_surrogates() {
+        let node = Node::list([Node::string(Text::from_utf16(&[0x61, 0xDE00, 0xD800]))]);
+        let mut out = Vec::new();
+        write(&node, &mut out, true, false).unwrap();
+        let json = String::from_utf8(out).unwrap();
+        assert_eq!(json, "[\"a\\ude00\\ud800\"]\n");
+        assert_eq!(read(&json).unwrap(), node);
+        // A pair written as escapes is one character.
         assert_eq!(
-            error("[\"\\ud800\"]"),
-            "unpaired surrogate in \\u escape at line 1, column 9"
+            read(r#"["😀"]"#).unwrap().to_string(),
+            r#"{""\d83d"\de00"}"#
         );
     }
 }

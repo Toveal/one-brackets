@@ -268,7 +268,7 @@ fn get(args: Get) -> Result<()> {
     let found = node.try_get_path(&path)?;
     let mut out = create(None)?;
     if args.raw {
-        let Some(text) = found.as_str() else {
+        let Some(text) = found.to_string_lossy() else {
             bail!(
                 "the node at `{}` is a list: --raw prints strings and atoms",
                 args.path

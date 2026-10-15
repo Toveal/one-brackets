@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::de::take_smuggled_node;
 use crate::error::count_mismatch;
-use crate::{Node, Value};
+use crate::{Node, Text, Value};
 
 pub(crate) const NODE: &str = "$one_brackets::Node";
 pub(crate) const VALUE: &str = "$one_brackets::Value";
@@ -272,7 +272,7 @@ pub mod atom {
 }
 
 /// Writes an atom: a plain string in other formats.
-struct AtomStr<'a>(&'a str);
+struct AtomStr<'a>(&'a Text);
 
 impl Serialize for AtomStr<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -357,6 +357,24 @@ impl<'de> Deserialize<'de> for Kind {
 }
 
 /// Positions are not written: they belong to the parsed text.
+/// A string; text with an unpaired surrogate cannot be serialized.
+impl Serialize for Text {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.as_str() {
+            Some(s) => serializer.serialize_str(s),
+            None => Err(serde::ser::Error::custom(format_args!(
+                "text {self:?} holds an unpaired surrogate"
+            ))),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Text {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(Text::from)
+    }
+}
+
 impl Serialize for Node {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         self.value().serialize(serializer)
