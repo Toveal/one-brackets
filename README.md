@@ -118,6 +118,17 @@ fn main() -> Result<(), one_brackets::ParseError> {
 cargo run --example v8log --features serde -- path/to/20260908000000.lgp
 ```
 
+## Command-line tool
+
+[`one-brackets-cli`](cli/README.md) converts bracket files to JSON, YAML and XML and back
+without losses, checks them and prints nodes by path:
+
+```sh
+cargo install one-brackets-cli
+one-brackets export Form.txt -o Form.yaml
+one-brackets import Form.yaml -o Form.txt
+```
+
 ## Performance
 
 Parsing allocates a `String` per value and a `Vec` per list, so large inputs are bound

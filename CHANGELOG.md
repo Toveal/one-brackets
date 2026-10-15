@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Command-line tool `one-brackets` (package `one-brackets-cli`): lossless export of bracket
+  files to JSON, YAML and XML and import back, streaming export of event log records,
+  `check`, `fmt` and `get` commands.
+
 ### Fixed
 
 - `Clone`, `PartialEq`, `Hash`, `Debug` and dropping of `Node` are no longer recursive:

@@ -123,6 +123,17 @@ fn main() -> Result<(), one_brackets::ParseError> {
 cargo run --example v8log --features serde -- path/to/20260908000000.lgp
 ```
 
+## Утилита командной строки
+
+[`one-brackets-cli`](cli/README.ru.md) без потерь переводит скобочные файлы в JSON, YAML и XML
+и обратно, проверяет их и выводит узлы по пути:
+
+```sh
+cargo install one-brackets-cli
+one-brackets export Form.txt -o Form.yaml
+one-brackets import Form.yaml -o Form.txt
+```
+
 ## Производительность
 
 При разборе каждое значение — отдельный `String`, каждый список — отдельный `Vec`, поэтому
