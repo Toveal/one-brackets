@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-17
+
+Reading follows the reader of the platform (8.3.27) to the byte.
+
+### Changed
+
+- **Breaking:** `Value::Str` and `Value::Atom` hold `Text` instead of `String`. `Text` keeps
+  unpaired surrogates, which the platform allows in strings; `as_str()` gives `None` for such
+  text and `to_string_lossy()` replaces them with U+FFFD. `Node::atom` and `Node::string`
+  take `impl Into<Text>`, so `&str` and `String` work as before.
+- **Breaking:** an atom runs up to the next `,` or `}` (or the end of input): whitespace,
+  line breaks, `{` and `"` inside it are part of its text, trailing whitespace included.
+  Before, an atom ended at whitespace or `{`, so `{1 2}` was an error and is now the atom `1 2`.
+  `as_atom()` gives the text as written; the typed accessors (`as_i64`, `try_parse`,
+  `as_bool`, `as_guid`, serde) read it trimmed.
+- **Breaking:** characters outside the Basic Multilingual Plane in quoted strings are written
+  as escapes of their UTF-16 code units, as the platform writes them: `"a😀"` is written
+  `"a"\d83d"\de00"`.
+- Whitespace between items is any whitespace of ICU `u_isspace`, as in the platform:
+  U+00A0, U+2000..U+200A, U+3000 and the like, not only ASCII whitespace.
+- `Node::into_string` replaces unpaired surrogates with U+FFFD; `into_text` keeps them.
+
+### Added
+
+- `Text`, `Node::as_text`, `Node::try_text`, `Node::into_text`, `Node::to_string_lossy`,
+  `Node::as_atom_trimmed`.
+- Escapes `"\xxxx` in quoted strings: a UTF-16 code unit in hex, which the platform writes
+  for each surrogate. `ParseError::InvalidEscape` reports a broken one.
+- CLI: unpaired surrogates are kept in JSON as `\uXXXX` escapes; YAML and XML report them
+  as an error. Atoms read from JSON, YAML and XML may hold whitespace and `{`.
+
 ## [0.2.0] - 2026-10-15
 
 ### Added
@@ -66,6 +97,7 @@ First release.
   dictionary.
 - Benchmarks and performance notes on allocators for Windows and Linux.
 
-[Unreleased]: https://github.com/Toveal/one-brackets/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Toveal/one-brackets/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Toveal/one-brackets/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Toveal/one-brackets/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Toveal/one-brackets/releases/tag/v0.1.0

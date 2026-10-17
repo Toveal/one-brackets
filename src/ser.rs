@@ -121,7 +121,7 @@ impl ser::Serializer for NodeSerializer {
                 None => Err(SerializeError::new("a rest must serialize as a sequence")),
             },
             ATOM => match to_node(value)?.into_value() {
-                Value::Str(s) | Value::Atom(s) => one(Node::atom(s)),
+                Value::Str(s) | Value::Atom(s) => one(Node::from(Value::Atom(s))),
                 Value::List(_) => Err(SerializeError::new("an atom must serialize as a string")),
             },
             _ => value.serialize(self),

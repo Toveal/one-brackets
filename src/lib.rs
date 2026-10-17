@@ -113,6 +113,7 @@ mod parser;
 mod ser;
 #[cfg(feature = "serde")]
 mod serde_impls;
+mod text;
 mod writer;
 
 #[cfg(feature = "serde")]
@@ -130,3 +131,4 @@ pub use ser::{to_node, to_string};
 #[cfg(feature = "serde")]
 #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 pub use serde_impls::{Counted, Rest, atom};
+pub use text::Text;

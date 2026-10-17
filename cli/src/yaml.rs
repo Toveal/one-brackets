@@ -75,10 +75,13 @@ impl Syntax for Flow {
 
     fn leaf(&self, node: &Node, out: &mut dyn Write) -> io::Result<()> {
         match node.value() {
-            Value::Str(s) => write_quoted(s, out),
+            Value::Str(s) => write_quoted(tree::unicode(s, "YAML")?, out),
             Value::Atom(s) if s.is_empty() => out.write_all(b"~"),
-            Value::Atom(s) if is_plain(s) => out.write_all(s.as_bytes()),
             Value::Atom(s) => {
+                let s = tree::unicode(s, "YAML")?;
+                if is_plain(s) {
+                    return out.write_all(s.as_bytes());
+                }
                 out.write_all(b"!atom ")?;
                 write_quoted(s, out)
             }
@@ -187,13 +190,13 @@ fn scalar(
 ) -> Result<Node> {
     let value = value.into_owned();
     match tag {
-        Some(tag) if tag.handle == "!" && tag.suffix == "atom" => tree::atom(value, at),
+        Some(tag) if tag.handle == "!" && tag.suffix == "atom" => tree::atom(value.into(), at),
         Some(tag) if tag.suffix == "str" && (tag.handle == "!" || tag.is_yaml_core_schema()) => {
             Ok(Node::string(value))
         }
         Some(tag) => bail!("unsupported tag {tag} at {at}: use !atom or !str"),
         None if style == ScalarStyle::Plain && value == "~" => Ok(Node::atom("")),
-        None if style == ScalarStyle::Plain => tree::atom(value, at),
+        None if style == ScalarStyle::Plain => tree::atom(value.into(), at),
         None => Ok(Node::string(value)),
     }
 }
@@ -313,8 +316,8 @@ mod tests {
             "a second document at line 2, column 1: only one value is allowed"
         );
         assert_eq!(
-            error("- 1\n- a b\n"),
-            "atom \"a b\" at line 2, column 3 contains whitespace: use a quoted string instead"
+            error("- 1\n- a}b\n"),
+            "atom \"a}b\" at line 2, column 3 contains ',' or '}': use a quoted string instead"
         );
         assert_eq!(error(""), "input is empty: expected a value");
         assert_eq!(

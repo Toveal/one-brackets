@@ -17,11 +17,14 @@ fn parse_errors() {
         ("unclosed_string", "{1,\r\n\"строка}".as_bytes()),
         ("unmatched_close", b"{1}}"),
         ("trailing_data", b"{1} {2}"),
-        ("missing_comma", b"{1 2}"),
+        ("missing_comma", b"{\"1\" 2}"),
         ("unexpected_unicode", "{\"a\"ж}".as_bytes()),
-        ("list_after_value", b"{1{2}}"),
+        ("value_after_list", b"{{1} {2}}"),
+        ("atom_with_brace", b"{1{2}}"),
         ("invalid_utf8_string", b"{\"\xFF\"}"),
         ("invalid_utf8_value", b"{1,\xC3}"),
+        ("invalid_escape", b"{\"a\"\\12x4\"}"),
+        ("unfinished_escape", b"{\"a\"\\12"),
     ];
     let report = cases
         .iter()
