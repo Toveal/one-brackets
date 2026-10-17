@@ -112,11 +112,11 @@ impl Text {
 /// Appends a code point, joining a low surrogate with a high one before it.
 pub(crate) fn push_code_point(bytes: &mut Vec<u8>, c: u32) {
     let mut c = c;
-    if let 0xDC00..=0xDFFF = c
-        && let Some(high) = trailing_high_surrogate(bytes)
-    {
-        bytes.truncate(bytes.len() - 3);
-        c = 0x10000 + ((high - 0xD800) << 10) + (c - 0xDC00);
+    if (0xDC00..=0xDFFF).contains(&c) {
+        if let Some(high) = trailing_high_surrogate(bytes) {
+            bytes.truncate(bytes.len() - 3);
+            c = 0x10000 + ((high - 0xD800) << 10) + (c - 0xDC00);
+        }
     }
     match char::from_u32(c) {
         Some(ch) => bytes.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes()),
