@@ -71,6 +71,7 @@ impl Syntax for Xml {
             Value::Atom(s) => ("atom", s),
             Value::List(_) => unreachable!("lists are not leaves"),
         };
+        let text = tree::unicode(text, "XML")?;
         if text.is_empty() {
             return write!(out, "<{name}/>");
         }
@@ -146,7 +147,7 @@ pub fn read(text: &str) -> Result<Node> {
             },
             Event::End(_) => match leaf.take() {
                 Some(("atom", value, start)) => tree::atom(
-                    value,
+                    value.into(),
                     Location {
                         text,
                         offset: start,
@@ -310,8 +311,8 @@ mod tests {
             "element <str> at line 1, column 14 inside a scalar"
         );
         assert_eq!(
-            error("<list>\n<atom>a b</atom></list>"),
-            "atom \"a b\" at line 2, column 1 contains whitespace: use a quoted string instead"
+            error("<list>\n<atom> a</atom></list>"),
+            "atom \" a\" at line 2, column 1 starts with whitespace: use a quoted string instead"
         );
         assert_eq!(
             error("<list/><list/>"),

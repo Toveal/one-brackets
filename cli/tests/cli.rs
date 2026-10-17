@@ -146,7 +146,8 @@ fn exports_event_log_records() {
 
     let error = stderr(cli().args(["export", "--lines"]).arg(&log));
     assert!(error.starts_with("error: failed to read `"), "{error}");
-    assert!(error.contains("at line 1, column 13"), "{error}");
+    // Without skipping the header its text is read as atoms up to the first `,`.
+    assert!(error.contains("no list is open"), "{error}");
 }
 
 #[test]
@@ -233,7 +234,7 @@ fn reports_import_errors() {
     );
     assert_eq!(
         error,
-        "error: failed to read `-`: atom \"a,b\" at line 2, column 1 contains ',', '{' or '}': use a quoted string instead\n"
+        "error: failed to read `-`: atom \"a,b\" at line 2, column 1 contains ',' or '}': use a quoted string instead\n"
     );
 
     let error = stderr(

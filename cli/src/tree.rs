@@ -6,7 +6,7 @@ use std::io::{self, Write};
 use std::slice;
 
 use anyhow::{Result, bail};
-use one_brackets::{Node, Value};
+use one_brackets::{Node, Text, Value};
 
 /// A step of a depth-first walk.
 pub enum Event<'a> {
@@ -148,20 +148,38 @@ pub fn write_nested<S: Syntax>(
 
 /// Builds an atom read from another format, checking that the bracket parser
 /// would read the written text back as the same atom.
-pub fn atom(text: String, at: impl fmt::Display) -> Result<Node> {
-    let problem = if text.contains([',', '{', '}']) {
-        Some("contains ',', '{' or '}'")
-    } else if text.starts_with('"') {
-        Some("starts with a quote")
-    } else if !text.starts_with("#base64:") && text.contains(|c: char| c.is_ascii_whitespace()) {
-        Some("contains whitespace")
+///
+/// An atom runs up to the next `,` or `}`; a leading `{`, quote or whitespace would start
+/// a list, start a string or be skipped.
+pub fn atom(text: Text, at: impl fmt::Display) -> Result<Node> {
+    let Some(s) = text.as_str() else {
+        bail!("atom {text:?} at {at} holds an unpaired surrogate: use a quoted string instead");
+    };
+    let problem = if s.contains([',', '}']) {
+        Some("contains ',' or '}'")
+    } else if s.starts_with(['{', '"']) {
+        Some("starts with '{' or a quote")
+    } else if !s.is_empty()
+        && Node::try_from(format!("{{{s}}}").as_str()).ok() != Some(Node::list([Node::atom(s)]))
+    {
+        // Whitespace as the platform understands it, U+00A0 and the like included.
+        Some("starts with whitespace")
     } else {
         None
     };
     match problem {
-        Some(problem) => bail!("atom {text:?} at {at} {problem}: use a quoted string instead"),
+        Some(problem) => bail!("atom {s:?} at {at} {problem}: use a quoted string instead"),
         None => Ok(Node::atom(text)),
     }
+}
+
+/// Text of a string or an atom for a format that holds only Unicode: YAML, XML.
+pub fn unicode<'a>(text: &'a Text, format: &str) -> io::Result<&'a str> {
+    text.as_str().ok_or_else(|| {
+        io::Error::other(format!(
+            "text {text:?} holds an unpaired surrogate, which {format} cannot keep: export to JSON"
+        ))
+    })
 }
 
 /// Checks the top-level value: an empty atom alone would be written as an empty file.
@@ -212,17 +230,25 @@ mod tests {
 
     #[test]
     fn checks_atoms() {
-        assert!(atom("c2f34349-b1e0-4060-8abf-3c59f38ac69f".into(), "x").is_ok());
-        assert!(atom(String::new(), "x").is_ok());
-        assert!(atom("#base64:QUJD\r\r\nREVG".into(), "x").is_ok());
-        for bad in ["a,b", "{", "\"q", "a b", " a", "a\n"] {
+        for good in [
+            "c2f34349-b1e0-4060-8abf-3c59f38ac69f",
+            "",
+            "#base64:QUJD\r\r\nREVG\r\r\n",
+            "a b",
+            "a\n",
+            "a{b\"",
+        ] {
+            assert!(atom(good.into(), "x").is_ok(), "{good:?}");
+        }
+        for bad in ["a,b", "a}", "{", "\"q", " a", "\u{a0}a", "\r\na"] {
             assert!(atom(bad.into(), "x").is_err(), "{bad:?}");
         }
+        assert!(atom(Text::from_utf16(&[0xD800]), "x").is_err());
         assert_eq!(
-            atom("a b".into(), "line 1, column 2")
+            atom(" a".into(), "line 1, column 2")
                 .unwrap_err()
                 .to_string(),
-            "atom \"a b\" at line 1, column 2 contains whitespace: use a quoted string instead"
+            "atom \" a\" at line 1, column 2 starts with whitespace: use a quoted string instead"
         );
     }
 

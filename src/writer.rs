@@ -4,7 +4,7 @@
 use std::fmt;
 use std::io;
 
-use crate::{Node, Value};
+use crate::{Node, Text, Value};
 
 impl Node {
     /// Writes the bracket file text to any [`io::Write`].
@@ -80,17 +80,51 @@ fn open<'a>(
         }
         Value::Str(s) => {
             out.write_char('"')?;
-            for (i, part) in s.split('"').enumerate() {
-                if i > 0 {
-                    out.write_str("\"\"")?;
-                }
-                out.write_str(part)?;
-            }
+            write_quoted(s, out)?;
             out.write_char('"')?;
         }
-        Value::Atom(s) => out.write_str(s)?,
+        // Without escapes an unpaired surrogate cannot be written: it becomes U+FFFD.
+        Value::Atom(s) => out.write_str(&s.to_string_lossy())?,
     }
     Ok(())
+}
+
+/// Text of a quoted string: a quote is doubled, and each surrogate, paired or not, is written
+/// as an escape `"\xxxx`, as the platform does: `a😀` is `a"\d83d"\de00`.
+fn write_quoted(text: &Text, out: &mut impl fmt::Write) -> fmt::Result {
+    let escape = |unit: u32, out: &mut dyn fmt::Write| write!(out, "\"\\{unit:04x}");
+    let Some(s) = text.as_str() else {
+        for c in text.code_points() {
+            match char::from_u32(c) {
+                Some(c) => write_char(c, out, escape)?,
+                None => escape(c, out)?,
+            }
+        }
+        return Ok(());
+    };
+    let mut rest = s;
+    while let Some(i) = rest.find(|c: char| c == '"' || c > '\u{ffff}') {
+        out.write_str(&rest[..i])?;
+        let c = rest[i..].chars().next().expect("found at i");
+        write_char(c, out, escape)?;
+        rest = &rest[i + c.len_utf8()..];
+    }
+    out.write_str(rest)
+}
+
+fn write_char(
+    c: char,
+    out: &mut impl fmt::Write,
+    escape: impl Fn(u32, &mut dyn fmt::Write) -> fmt::Result,
+) -> fmt::Result {
+    match c {
+        '"' => out.write_str("\"\""),
+        '\u{10000}'.. => c
+            .encode_utf16(&mut [0; 2])
+            .iter()
+            .try_for_each(|&unit| escape(u32::from(unit), out)),
+        _ => out.write_char(c),
+    }
 }
 
 struct IoAdapter<W> {
